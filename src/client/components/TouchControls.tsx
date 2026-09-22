@@ -1,19 +1,35 @@
-import { useRef, type PointerEvent } from "react";
+import { useRef, useState, type PointerEvent } from "react";
 import type { GameBoyButton, GameBoyEmulator } from "../emulator/GameBoyEmulator";
 
-type Props = { emulator: GameBoyEmulator | null };
+type Props = { emulator: GameBoyEmulator | null; haptics: boolean };
 type Direction = "up" | "down" | "left" | "right";
 const DEADZONE = 0.25;
 
-/** On-screen gamepad for touch devices (shown via CSS on coarse pointers). */
-export function TouchControls({ emulator }: Props) {
+function buzz(on: boolean) {
+  if (on) navigator.vibrate?.(8);
+}
+
+/**
+ * On-screen gamepad for phones (shown via CSS on coarse pointers / narrow
+ * screens). Every control tracks its own pointer, so presses combine
+ * (multi-touch): hold a direction and tap A at the same time.
+ */
+export function TouchControls({ emulator, haptics }: Props) {
   const held = useRef(new Set<Direction>());
+  const [dirs, setDirs] = useState<Set<Direction>>(new Set());
 
   const setDirections = (next: Set<Direction>) => {
     if (!emulator) return;
+    let added = false;
     for (const d of held.current) if (!next.has(d)) emulator.buttonUp(d);
-    for (const d of next) if (!held.current.has(d)) emulator.buttonDown(d);
+    for (const d of next)
+      if (!held.current.has(d)) {
+        emulator.buttonDown(d);
+        added = true;
+      }
+    if (added) buzz(haptics);
     held.current = next;
+    setDirs(next);
   };
 
   const onDpad = (e: PointerEvent<HTMLDivElement>) => {
@@ -40,18 +56,30 @@ export function TouchControls({ emulator }: Props) {
         onPointerMove={onDpad}
         onPointerUp={releaseDpad}
         onPointerCancel={releaseDpad}
+        role="group"
         aria-label="Direction pad"
       >
-        <span className="dpad-h" />
-        <span className="dpad-v" />
+        <span className="dpad-well" aria-hidden />
+        {(["up", "down", "left", "right"] as const).map((d) => (
+          <span key={d} className={`dpad-arm ${d}${dirs.has(d) ? " on" : ""}`} aria-hidden />
+        ))}
+        <span className="dpad-hub" aria-hidden />
       </div>
       <div className="face-buttons">
-        <TouchButton emulator={emulator} button="b" label="B" className="round b" />
-        <TouchButton emulator={emulator} button="a" label="A" className="round a" />
+        <TouchButton emulator={emulator} haptics={haptics} button="b" label="B" className="round b" />
+        <TouchButton emulator={emulator} haptics={haptics} button="a" label="A" className="round a" />
       </div>
       <div className="menu-buttons">
-        <TouchButton emulator={emulator} button="select" label="SELECT" className="pill" />
-        <TouchButton emulator={emulator} button="start" label="START" className="pill" />
+        <TouchButton emulator={emulator} haptics={haptics} button="select" label="SELECT" className="pill" />
+        <TouchButton emulator={emulator} haptics={haptics} button="start" label="START" className="pill" />
+      </div>
+      <div className="grille" aria-hidden>
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
       </div>
     </div>
   );
@@ -59,11 +87,13 @@ export function TouchControls({ emulator }: Props) {
 
 function TouchButton({
   emulator,
+  haptics,
   button,
   label,
   className,
 }: {
   emulator: GameBoyEmulator | null;
+  haptics: boolean;
   button: GameBoyButton;
   label: string;
   className: string;
@@ -72,6 +102,7 @@ function TouchButton({
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     e.currentTarget.classList.add("pressed");
+    buzz(haptics);
     emulator?.buttonDown(button);
   };
   const up = (e: PointerEvent<HTMLButtonElement>) => {
@@ -81,6 +112,7 @@ function TouchButton({
   return (
     <div className={`touch-btn-wrap ${className}`}>
       <button
+        type="button"
         className="touch-btn"
         onPointerDown={down}
         onPointerUp={up}
@@ -88,7 +120,7 @@ function TouchButton({
         aria-label={label}
         tabIndex={-1}
       />
-      <span>{label}</span>
+      <span aria-hidden>{label}</span>
     </div>
   );
 }

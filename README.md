@@ -238,7 +238,8 @@ Two ways to be a player:
   the Durable Object. The **Saves** panel shows/copies the key and lets you
   paste it into another browser. Lose the key and those cloud saves are
   unreachable.
-- **Email sign-in (optional).** Saves panel → *Back up with email* → an
+- **Email sign-in (optional).** The welcome screen on first visit (or
+  *Sign in* on the start screen, or the Saves panel in-game) → an
   8-character code (`K7QM-4XRP`, no 0/O/1/I/L) is emailed from
   `login@pocketcloud.app` via Cloudflare Email Service. Redeeming it links
   the email to the browser's current player, so existing cloud saves become

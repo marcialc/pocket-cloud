@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
+import { CloudPanel } from "./components/CloudPanel";
+import { ControlsPanel } from "./components/ControlsPanel";
+import { backupName, downloadBytes } from "./components/download";
 import { GameScreen } from "./components/GameScreen";
 import { RomPicker } from "./components/RomPicker";
 import { SaveChoice } from "./components/SaveChoice";
+import { WelcomeScreen } from "./components/WelcomeScreen";
 import { RomError, displayName, inspectRom, type RomInfo } from "./emulator/rom";
 import { loadPreferences, savePreferences, type Preferences } from "./preferences";
+import { fetchAccount, signOut } from "./saves/authApi";
+import { resetPlayerKey } from "./saves/identity";
 import {
+  clearCloudSyncState,
   deleteLocalSave,
   deleteRom,
   getLocalSave,
@@ -18,6 +25,7 @@ import {
   type RomSummary,
 } from "./saves/localSaves";
 import { localFromCloud, planLaunch, type LaunchPlan } from "./saves/SaveSync";
+import { bindUiSounds } from "./uiSound";
 
 export type Session = {
   rom: RomInfo;
@@ -36,12 +44,44 @@ type Stage =
 export function App() {
   const [stage, setStage] = useState<Stage>({ name: "pick" });
   const [prefs, setPrefs] = useState<Preferences>(loadPreferences);
-  const [library, setLibrary] = useState<RomSummary[]>([]);
+  // null until IndexedDB answers, so the empty-shelf art doesn't flash on load.
+  const [library, setLibrary] = useState<RomSummary[] | null>(null);
+  // Signed-in email; undefined while checking, null when signed out.
+  const [account, setAccount] = useState<string | null | undefined>(undefined);
+  const [welcome, setWelcome] = useState(false);
+  const [panel, setPanel] = useState<"account" | "controls" | null>(null);
+
+  // App-wide preferences that live outside any one screen.
+  useEffect(() => {
+    document.documentElement.dataset.motion = prefs.reduceMotion ? "reduce" : "system";
+  }, [prefs.reduceMotion]);
+  useEffect(() => (prefs.uiSounds ? bindUiSounds() : undefined), [prefs.uiSounds]);
 
   const refreshLibrary = useCallback(() => {
     listRoms().then(setLibrary, () => setLibrary([]));
   }, []);
   useEffect(refreshLibrary, [refreshLibrary]);
+
+  useEffect(() => {
+    fetchAccount().then((email) => {
+      setAccount(email);
+      if (!email && !loadPreferences().skipSignIn) setWelcome(true);
+    });
+  }, []);
+
+  /** After sign-in: the old anonymous key now belongs to the account, so rotate it. */
+  const signedIn = useCallback(async (email: string) => {
+    resetPlayerKey();
+    await clearCloudSyncState();
+    setAccount(email);
+    setWelcome(false);
+  }, []);
+
+  const signedOut = useCallback(async (everywhere: boolean) => {
+    await signOut(everywhere);
+    await clearCloudSyncState();
+    setAccount(null);
+  }, []);
 
   const updatePrefs = useCallback((patch: Partial<Preferences>) => {
     setPrefs((prev) => {
@@ -99,9 +139,12 @@ export function App() {
     [prefs.cloudSync, prefs.rememberRom, refreshLibrary],
   );
 
-  const chooseSave = useCallback(async (choice: "local" | "cloud") => {
+  const chooseSave = useCallback(async (choice: "local" | "cloud", backup: boolean) => {
     if (stage.name !== "choose") return;
     const { rom, romData, plan } = stage;
+    // Offer the save being replaced as a file first.
+    if (backup && choice === "local" && plan.cloud) downloadBytes(plan.cloud.sram, backupName(rom.gameId, "cloud"));
+    if (backup && choice === "cloud" && plan.local) downloadBytes(plan.local.sram, backupName(rom.gameId, "device"));
     if (choice === "cloud") {
       const save = localFromCloud(plan.cloud!);
       await putLocalSave(save);
@@ -148,18 +191,53 @@ export function App() {
   switch (stage.name) {
     case "pick":
     case "loading":
+      if (stage.name === "pick" && welcome) {
+        return (
+          <WelcomeScreen
+            onSignedIn={signedIn}
+            onSkip={() => {
+              updatePrefs({ skipSignIn: true });
+              setWelcome(false);
+            }}
+          />
+        );
+      }
       return (
-        <RomPicker
-          busy={stage.name === "loading" ? stage.label : null}
-          error={stage.name === "pick" ? stage.error : undefined}
-          library={library}
-          prefs={prefs}
-          onPrefs={updatePrefs}
-          onOpen={openRom}
-          onPlayStored={openStored}
-          onRemoveStored={removeStored}
-          onRenameStored={renameStored}
-        />
+        <>
+          <RomPicker
+            busy={stage.name === "loading" ? stage.label : account === undefined ? "Starting…" : null}
+            error={stage.name === "pick" ? stage.error : undefined}
+            library={library}
+            prefs={prefs}
+            onPrefs={updatePrefs}
+            onOpen={openRom}
+            onPlayStored={openStored}
+            onRemoveStored={removeStored}
+            onRenameStored={renameStored}
+            account={account ?? null}
+            onAccount={() => setPanel("account")}
+            onControls={() => setPanel("controls")}
+          />
+          {panel === "account" && (
+            <CloudPanel
+              prefs={prefs}
+              onPrefs={updatePrefs}
+              onSignedIn={signedIn}
+              onSignOut={async (everywhere) => {
+                await signedOut(everywhere);
+                setPanel(null);
+              }}
+              onClose={() => setPanel(null)}
+            />
+          )}
+          {panel === "controls" && (
+            <ControlsPanel
+              bindings={prefs.keyBindings}
+              onChange={(keyBindings) => updatePrefs({ keyBindings })}
+              onClose={() => setPanel(null)}
+            />
+          )}
+        </>
       );
     case "choose":
       return (

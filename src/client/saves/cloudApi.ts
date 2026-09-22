@@ -3,6 +3,7 @@ import {
   bytesToBase64,
   type CloudSaveMeta,
   type CloudSaveResponse,
+  type ListSavesResponse,
   type PutSaveRequest,
   type PutSaveResponse,
 } from "../../shared/api";
@@ -49,6 +50,14 @@ export async function pushCloudSave(
   });
   if (res.status !== 200 && res.status !== 409) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
   return res.json();
+}
+
+/** Metadata (no SRAM) for every cloud save this player has. */
+export async function listCloudSaves(): Promise<CloudSaveMeta[]> {
+  const res = await call("/saves");
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+  const body: ListSavesResponse = await res.json();
+  return body.saves;
 }
 
 export async function deleteCloudSave(romHash: string): Promise<void> {

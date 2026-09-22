@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
 import { BinjgbEmulator } from "../emulator/BinjgbEmulator";
 import { bindKeyboard } from "../emulator/controls";
@@ -6,11 +6,17 @@ import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
 import { defaultPalette, displayName } from "../emulator/rom";
 import type { Preferences } from "../preferences";
+import { signOut } from "../saves/authApi";
+import { fetchCloudSave } from "../saves/cloudApi";
+import { resetPlayerKey } from "../saves/identity";
+import { clearCloudSyncState } from "../saves/localSaves";
 import { SaveSync, type SyncStatus } from "../saves/SaveSync";
 import { CloudPanel } from "./CloudPanel";
 import { ControlsPanel } from "./ControlsPanel";
+import { backupName, downloadBytes } from "./download";
+import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
-import { SyncBadge } from "./SyncBadge";
+import { describeStatus, SyncBadge } from "./SyncBadge";
 import { TouchControls } from "./TouchControls";
 
 type Props = {
@@ -20,17 +26,26 @@ type Props = {
   onEject: () => void;
 };
 
+const LCD_W = 160;
+const LCD_H = 144;
+const DIM_AFTER_MS = 2500;
+
 export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
-  const shell = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [emulator, setEmulator] = useState<GameBoyEmulator | null>(null);
   const [sync, setSync] = useState<SaveSync | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState(false);
-  const [controlsOpen, setControlsOpen] = useState(false);
+  const [panel, setPanel] = useState<"account" | "controls" | null>(null);
+  const [menu, setMenu] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [scale, setScale] = useState(3);
+  const [dim, setDim] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
   const title = displayName(session.rom);
 
   // Boot: one emulator + one sync pipeline per session.
@@ -89,6 +104,32 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
   }, [emulator, prefs.volume, prefs.muted]);
   useEffect(() => sync?.setCloudEnabled(prefs.cloudSync), [sync, prefs.cloudSync]);
 
+  // Largest whole-number scale that fits: every LCD pixel stays the same size.
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const fit = () => {
+      const css = getComputedStyle(el);
+      const chromeX = parseFloat(css.getPropertyValue("--chrome-x")) || 0;
+      const chromeY = parseFloat(css.getPropertyValue("--chrome-y")) || 0;
+      const w = el.clientWidth - chromeX;
+      const h = el.clientHeight - chromeY;
+      setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H))));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Screen readers hear sync changes (state changes only, not every timestamp).
+  const statusKind = describeStatus(status).label;
+  useEffect(() => {
+    const d = describeStatus(status);
+    setAnnounce(`Save ${d.label.toLowerCase()}. ${d.detail}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- announce on label change only
+  }, [statusKind]);
+
   const setRunning = useCallback(
     (run: boolean) => {
       if (!emulator) return;
@@ -125,33 +166,61 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
     };
   }, [emulator, sync, setRunning]);
 
-  const reset = () => {
-    if (!confirmReset) {
-      setConfirmReset(true);
-      setTimeout(() => setConfirmReset(false), 2500);
-      return;
-    }
+  // Toolbar dims while you play and comes back on mouse move or tap.
+  const dimTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const wake = useCallback(() => {
+    setDim(false);
+    clearTimeout(dimTimer.current);
+    dimTimer.current = setTimeout(() => setDim(true), DIM_AFTER_MS);
+  }, []);
+  useEffect(() => {
+    wake();
+    return () => clearTimeout(dimTimer.current);
+  }, [wake]);
+
+  const togglePause = () => {
+    setRunning(paused);
+    setAnnounce(paused ? "Resumed" : "Paused");
+  };
+
+  const openReset = () => {
+    setConfirmReset(true);
+    setTimeout(() => document.getElementById("reset-cancel")?.focus(), 0);
+  };
+
+  const doReset = () => {
     setConfirmReset(false);
+    setMenu(false);
     emulator?.reset();
+    if (paused) setRunning(true);
+    setFlash("RESET");
+    setAnnounce("Game reset");
+    setTimeout(() => setFlash(null), 700);
   };
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void shell.current?.requestFullscreen?.().catch(() => {});
+    else void root.current?.requestFullscreen?.().catch(() => {});
   };
 
   const downloadSave = () => {
     const sram = emulator?.getSram();
-    if (!sram) return;
-    const url = URL.createObjectURL(new Blob([sram.slice().buffer], { type: "application/octet-stream" }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: `${session.rom.gameId}.sav` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (sram) downloadBytes(sram, `${session.rom.gameId}.sav`);
   };
 
-  const resolveConflict = async (choice: "local" | "cloud") => {
+  const resolveConflict = async (choice: "local" | "cloud", backup: boolean) => {
     if (!sync || !emulator) return;
-    if (choice === "local") return sync.keepLocal();
+    if (choice === "local") {
+      if (backup) {
+        const cloud = await fetchCloudSave(session.rom.romHash).catch(() => null);
+        if (cloud) downloadBytes(cloud.sram, backupName(session.rom.gameId, "cloud"));
+      }
+      return sync.keepLocal();
+    }
+    if (backup) {
+      const sram = emulator.getSram();
+      if (sram) downloadBytes(sram, backupName(session.rom.gameId, "device"));
+    }
     const sram = await sync.takeCloud();
     if (sram) {
       emulator.loadSram(sram);
@@ -159,90 +228,230 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
     }
   };
 
+  /** Identity changed in-game (signed in or out): save, drop sync state and re-run the launch flow. */
+  const switchIdentity = async (change: () => Promise<void> | void) => {
+    await sync?.flush();
+    sync?.destroy();
+    await change();
+    await clearCloudSyncState();
+    window.location.reload();
+  };
+
   const localSave = sync?.getLocal() ?? session.save;
+  const muted = prefs.muted || prefs.volume === 0;
+  const overlayOpen = panel !== null || menu || confirmReset;
+
+  const tools: { icon: IconName; label: string; onClick: () => void; pressed?: boolean; disabled?: boolean }[] = [
+    { icon: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", onClick: togglePause, disabled: !emulator },
+    { icon: "sync", label: "Sync now", onClick: () => void sync?.flush(), disabled: !sync || !prefs.cloudSync },
+    { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator },
+  ];
 
   return (
-    <div className="game" ref={shell}>
+    <div
+      className={`game${dim && !paused && !overlayOpen ? " idle" : ""}`}
+      ref={root}
+      onMouseMove={wake}
+      onPointerDown={wake}
+      style={{ "--scale": scale } as CSSProperties}
+    >
       <header className="game-bar">
-        <button className="brand" onClick={onEject} title="Eject cartridge">
-          <span className="brand-dot" aria-hidden /> {title}
-        </button>
-        <SyncBadge status={status} onClick={() => setPanel(true)} />
+        <Brand />
+        <span className="game-bar-title px">{title}</span>
+        <div className="game-bar-end">
+          <SyncBadge status={status} onClick={() => setPanel("account")} />
+          <button type="button" className="ibtn menu-btn" onClick={() => setMenu(true)} aria-label="Menu" aria-haspopup="dialog">
+            <Icon name="menu" size={20} />
+          </button>
+          <button type="button" className="link on-dark eject" onClick={onEject}>
+            Change game
+          </button>
+        </div>
       </header>
 
-      <div className="screen-area">
-        <div className="bezel">
-          <div className="bezel-label">
-            <span className="power" data-on={!paused && !error} /> POCKET CLOUD · STEREO
+      <div className="stage" ref={stage}>
+        <section className="shell plastic" aria-label="Handheld">
+          <div className="shell-top" aria-hidden>
+            <Ridges />
+            <Ridges />
           </div>
-          <div className="lcd">
-            <canvas ref={canvas} width={160} height={144} aria-label={`${title} screen`} />
-            {paused && !error && (
-              <button className="lcd-overlay" onClick={() => setRunning(true)}>
-                <span>PAUSED</span>
-                <small>click to resume</small>
-              </button>
-            )}
-            {error && (
-              <div className="lcd-overlay error-overlay" role="alert">
-                <span>ERROR</span>
-                <small>{error}</small>
-              </div>
-            )}
+          <div className="bezel">
+            <span className="power" data-on={!paused && !error} aria-hidden>
+              <span className="led" />
+              <span className="px">PWR</span>
+            </span>
+            <div className="lcd">
+              <canvas ref={canvas} width={LCD_W} height={LCD_H} role="img" aria-label={`${title} screen`} />
+              {paused && !error && !flash && (
+                <button type="button" className="lcd-overlay" onClick={togglePause}>
+                  <span className="px">PAUSED</span>
+                  <small className="px">PRESS TO RESUME</small>
+                </button>
+              )}
+              {flash && (
+                <div className="lcd-overlay" aria-hidden>
+                  <span className="px">{flash}</span>
+                </div>
+              )}
+              {error && (
+                <div className="lcd-overlay error-overlay" role="alert">
+                  <span className="px">ERROR</span>
+                  <small>{error}</small>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+          <div className="shell-foot">
+            <span className="px shell-title">{title}</span>
+            <span className="speaker" aria-hidden>
+              <span />
+              <span />
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+        </section>
       </div>
 
-      <TouchControls emulator={emulator} />
+      <TouchControls emulator={emulator} haptics={prefs.haptics} />
 
-      <footer className="toolbar">
-        <button className="tool" onClick={() => setRunning(paused)} disabled={!emulator}>
-          {paused ? "▶ Resume" : "❚❚ Pause"}
-        </button>
-        <button className="tool" onClick={() => void sync?.flush()} disabled={!sync} title="Back up the latest in-game save now">
-          ☁ Sync
-        </button>
-        <button className={`tool${confirmReset ? " warn" : ""}`} onClick={reset} disabled={!emulator}>
-          {confirmReset ? "Reset?" : "↺ Reset"}
-        </button>
-        <button className="tool" onClick={toggleFullscreen}>⛶ Fullscreen</button>
-        <button className="tool" onClick={() => setControlsOpen(true)}>⌨ Controls</button>
-        <div className="volume">
-          <button className="tool" onClick={() => onPrefs({ muted: !prefs.muted })} aria-label={prefs.muted ? "Unmute" : "Mute"}>
-            {prefs.muted || prefs.volume === 0 ? "🔇" : "🔊"}
+      <div className="toolbar-wrap">
+        <div className="toolbar plastic" role="toolbar" aria-label="Game controls">
+          {tools.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              className={`ibtn tip${t.label === "Reset" && confirmReset ? " on" : ""}`}
+              data-tip={t.label}
+              aria-label={t.label}
+              onClick={t.onClick}
+              disabled={t.disabled}
+            >
+              <Icon name={t.icon} />
+            </button>
+          ))}
+          <span className="sep" aria-hidden />
+          <button
+            type="button"
+            className="ibtn tip"
+            data-tip={muted ? "Unmute" : "Mute"}
+            aria-label="Mute"
+            aria-pressed={prefs.muted}
+            onClick={() => onPrefs({ muted: !prefs.muted })}
+          >
+            <Icon name={muted ? "soundOff" : "soundOn"} />
           </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={prefs.muted ? 0 : prefs.volume}
-            onChange={(e) => onPrefs({ volume: Number(e.target.value), muted: false })}
-            aria-label="Volume"
-          />
+          <VolumeSlider prefs={prefs} onPrefs={onPrefs} />
+          <span className="sep" aria-hidden />
+          <button type="button" className="ibtn tip" data-tip="Fullscreen" aria-label="Fullscreen" onClick={toggleFullscreen}>
+            <Icon name="fullscreen" />
+          </button>
+          <button type="button" className="ibtn tip" data-tip="Controls" aria-label="Controls" onClick={() => setPanel("controls")}>
+            <Icon name="gamepad" size={22} />
+          </button>
+          <button type="button" className="ibtn tip" data-tip="Account" aria-label="Account and saves" onClick={() => setPanel("account")}>
+            <Icon name="user" />
+          </button>
         </div>
-      </footer>
+        {confirmReset && !menu && (
+          <ResetConfirm title={title} onCancel={() => setConfirmReset(false)} onReset={doReset} className="popover" />
+        )}
+      </div>
 
-      <KeysHint bindings={prefs.keyBindings} onEdit={() => setControlsOpen(true)} />
+      <KeysHint bindings={prefs.keyBindings} onEdit={() => setPanel("controls")} />
 
-      {controlsOpen && (
-        <ControlsPanel
-          bindings={prefs.keyBindings}
-          onChange={(keyBindings) => onPrefs({ keyBindings })}
-          onClose={() => setControlsOpen(false)}
-        />
+      {menu && (
+        <div className="backdrop sheet-backdrop" onClick={() => setMenu(false)}>
+          <div
+            className="sheet plastic"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="menu-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === "Escape" && setMenu(false)}
+          >
+            <div className="side-head">
+              <h2 id="menu-title" className="px">
+                MENU
+              </h2>
+              <button type="button" className="ibtn" autoFocus onClick={() => setMenu(false)} aria-label="Close menu">
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+            {confirmReset ? (
+              <ResetConfirm title={title} onCancel={() => setConfirmReset(false)} onReset={doReset} />
+            ) : (
+              <>
+                <div className="tiles">
+                  {tools.map((t) => (
+                    <button
+                      key={t.label}
+                      type="button"
+                      className="tile"
+                      disabled={t.disabled}
+                      onClick={() => {
+                        t.onClick();
+                        if (t.label !== "Reset") setMenu(false);
+                      }}
+                    >
+                      <Icon name={t.icon} size={22} /> {t.label}
+                    </button>
+                  ))}
+                  <button type="button" className="tile" onClick={() => onPrefs({ muted: !prefs.muted })}>
+                    <Icon name={muted ? "soundOff" : "soundOn"} size={22} /> {prefs.muted ? "Unmute" : "Mute"}
+                  </button>
+                  <button type="button" className="tile" onClick={toggleFullscreen}>
+                    <Icon name="fullscreen" size={22} /> Fullscreen
+                  </button>
+                  <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("controls"))}>
+                    <Icon name="gamepad" size={24} /> Controls
+                  </button>
+                  <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("account"))}>
+                    <Icon name="user" size={22} /> Account
+                  </button>
+                  <button type="button" className="tile" onClick={onEject}>
+                    <Icon name="eject" size={22} /> Games
+                  </button>
+                </div>
+                <div className="sheet-rows">
+                  <div className="sheet-row">
+                    <label htmlFor="menu-volume">Volume</label>
+                    <VolumeSlider prefs={prefs} onPrefs={onPrefs} id="menu-volume" />
+                  </div>
+                  <label className="sheet-row">
+                    Vibrate on press
+                    <input
+                      className="switch"
+                      type="checkbox"
+                      role="switch"
+                      checked={prefs.haptics}
+                      onChange={(e) => onPrefs({ haptics: e.target.checked })}
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
-      {panel && (
+      {panel === "controls" && (
+        <ControlsPanel bindings={prefs.keyBindings} onChange={(keyBindings) => onPrefs({ keyBindings })} onClose={() => setPanel(null)} />
+      )}
+
+      {panel === "account" && (
         <CloudPanel
-          cloudSync={prefs.cloudSync}
-          onCloudSync={(cloudSync) => onPrefs({ cloudSync })}
-          onDownloadSave={emulator ? downloadSave : null}
+          prefs={prefs}
+          onPrefs={onPrefs}
+          onSignedIn={() => switchIdentity(resetPlayerKey)}
+          onSignOut={(everywhere) => switchIdentity(() => signOut(everywhere))}
           onBeforeRestore={async () => {
             await sync?.flush();
             sync?.destroy();
           }}
-          onClose={() => setPanel(false)}
+          current={{ romHash: session.rom.romHash, status, onDownload: downloadSave }}
+          onClose={() => setPanel(null)}
         />
       )}
 
@@ -253,22 +462,79 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
           local={{ updatedAt: localSave?.updatedAt ?? Date.now(), playTime: localSave?.playTime ?? 0 }}
           cloud={status.cloud}
           recommended={status.cloud.updatedAt > (localSave?.updatedAt ?? 0) ? "cloud" : "local"}
-          onChoose={(c) => void resolveConflict(c)}
+          onChoose={(c, backup) => resolveConflict(c, backup)}
         />
       )}
+
+      <p className="sr-only" aria-live="polite">
+        {announce}
+      </p>
+    </div>
+  );
+}
+
+function VolumeSlider({ prefs, onPrefs, id }: { prefs: Preferences; onPrefs: (patch: Partial<Preferences>) => void; id?: string }) {
+  const value = prefs.muted ? 0 : prefs.volume;
+  return (
+    <input
+      id={id}
+      className="volume"
+      type="range"
+      min={0}
+      max={1}
+      step={0.05}
+      value={value}
+      onChange={(e) => onPrefs({ volume: Number(e.target.value), muted: false })}
+      aria-label={id ? undefined : "Volume"}
+      aria-valuetext={prefs.muted ? "Muted" : `${Math.round(value * 100)} percent`}
+    />
+  );
+}
+
+function ResetConfirm({
+  title,
+  onCancel,
+  onReset,
+  className = "",
+}: {
+  title: string;
+  onCancel: () => void;
+  onReset: () => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`reset-confirm plastic enter ${className}`}
+      role="alertdialog"
+      aria-labelledby="reset-title"
+      aria-describedby="reset-desc"
+      onKeyDown={(e) => e.key === "Escape" && onCancel()}
+    >
+      <h2 id="reset-title">Reset {title}?</h2>
+      <p id="reset-desc">Progress since your last in-game save will be lost. Your saved game isn’t touched.</p>
+      <div className="row end">
+        <button id="reset-cancel" type="button" className="btn small" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="btn small primary" onClick={onReset}>
+          Reset
+        </button>
+      </div>
     </div>
   );
 }
 
 function KeysHint({ bindings, onEdit }: { bindings: KeyBindings; onEdit: () => void }) {
-  const first = (codes: string[]) => (codes[0] ? keyLabel(codes[0]) : "—");
+  const first = (codes: string[]) => (codes[0] ? keyLabel(codes[0]) : "none");
   const dpad = ["up", "down", "left", "right"] as const;
   const arrows = dpad.every((d) => bindings[d][0] === `Arrow${d[0]!.toUpperCase()}${d.slice(1)}`);
   return (
     <p className="keys-hint">
       {arrows ? "Arrows move" : dpad.map((d) => <kbd key={d}>{first(bindings[d])}</kbd>)} · <kbd>{first(bindings.a)}</kbd> A ·{" "}
       <kbd>{first(bindings.b)}</kbd> B · <kbd>{first(bindings.start)}</kbd> Start · <kbd>{first(bindings.select)}</kbd> Select
-      <button className="link" onClick={onEdit}>Change</button>
+      <button type="button" className="link on-dark" onClick={onEdit}>
+        Change
+      </button>
     </p>
   );
 }
