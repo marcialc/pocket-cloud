@@ -1,4 +1,6 @@
 import { sha256Hex } from "../shared/api";
+import { readSession, sessionSecret, type Session } from "./auth/session";
+import type { PlayerAccess } from "./durable-objects/PlayerSaveDO";
 
 /**
  * MVP anonymous identity.
@@ -22,4 +24,25 @@ export async function resolvePlayer(request: Request): Promise<Player | null> {
   if (!match || !KEY_PATTERN.test(match[1]!)) return null;
   const playerId = await sha256Hex(new TextEncoder().encode(match[1]!.toLowerCase()));
   return { playerId };
+}
+
+export type Identity = { playerId: string; access: PlayerAccess; session: Session | null };
+
+/**
+ * Who is calling: an email session (cookie) wins over the anonymous key. A
+ * session cookie that fails verification is an error, not a silent fallback
+ * to the key, so an expired sign-in never writes into an anonymous player.
+ * The caller must still ask the player's DO to `authorize` the access.
+ */
+export async function authenticate(request: Request, env: Env): Promise<Identity | { error: "unauthorized" | "session_invalid" }> {
+  const secret = sessionSecret(env);
+  if (secret) {
+    const session = await readSession(request, secret);
+    if (session === "invalid") return { error: "session_invalid" };
+    if (session) {
+      return { playerId: session.pid, access: { kind: "session", ownerId: session.oid, epoch: session.ep }, session };
+    }
+  }
+  const player = await resolvePlayer(request);
+  return player ? { playerId: player.playerId, access: { kind: "key" }, session: null } : { error: "unauthorized" };
 }

@@ -9,8 +9,12 @@ import {
   type PutSaveRequest,
   type PutSaveResponse,
 } from "../shared/api";
-import { resolvePlayer } from "./identity";
+import { handleAuth } from "./auth/routes";
+import { clearSessionCookie } from "./auth/session";
+import { isCrossSite, json, methodNotAllowed } from "./http";
+import { authenticate } from "./identity";
 
+export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
 
 /**
@@ -21,6 +25,11 @@ export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
  *   GET    /api/saves/:romHash     fetch one save (with SRAM)
  *   PUT    /api/saves/:romHash     upload SRAM (optimistic concurrency via baseRevision)
  *   DELETE /api/saves/:romHash     delete one save
+ *   /api/auth/*                    email sign-in, see auth/routes.ts
+ *
+ * Saves routes accept either an email session cookie or the anonymous player
+ * key (`Authorization: Bearer <key>`); a key stops working once an account
+ * has claimed its player.
  *
  * Only SRAM (battery save data) is ever accepted. ROM data is never sent here.
  */
@@ -39,11 +48,21 @@ export default {
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
   if (path === "/api/health") return json({ ok: true, time: Date.now() });
+  if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
+  if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
   if (!path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
 
-  const player = await resolvePlayer(request);
-  if (!player) return json({ error: "unauthorized" }, 401);
-  const stub = env.PLAYER_SAVE.getByName(`player:${player.playerId}`);
+  const identity = await authenticate(request, env);
+  if ("error" in identity) {
+    const headers: HeadersInit = identity.error === "session_invalid" ? { "Set-Cookie": clearSessionCookie(request.url) } : {};
+    return json({ error: identity.error }, 401, headers);
+  }
+  const stub = env.PLAYER_SAVE.getByName(`player:${identity.playerId}`);
+  if (!(await stub.authorize(identity.access))) {
+    return identity.access.kind === "key"
+      ? json({ error: "key_retired" }, 401)
+      : json({ error: "session_invalid" }, 401, { "Set-Cookie": clearSessionCookie(request.url) });
+  }
 
   if (path === "/api/saves") {
     if (request.method !== "GET") return methodNotAllowed();
@@ -121,12 +140,4 @@ async function parsePut(
   if (sram.length === 0 || sram.length > MAX_SRAM_BYTES) return { error: "invalid_sram_size" };
   if ((await sha256Hex(sram)) !== body.sramHash) return { error: "sram_hash_mismatch" };
   return { body, sram };
-}
-
-function json(data: unknown, status = 200): Response {
-  return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
-}
-
-function methodNotAllowed(): Response {
-  return json({ error: "method_not_allowed" }, 405);
 }

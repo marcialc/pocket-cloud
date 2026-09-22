@@ -15,7 +15,12 @@ export default defineConfig({
       },
       {
         // Worker + Durable Object tests inside workerd via Miniflare.
-        plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./wrangler.jsonc" },
+            miniflare: { bindings: { SESSION_SECRET: "test-session-secret-0123456789abcdef" } },
+          }),
+        ],
         test: {
           name: "worker",
           include: ["src/worker/**/*.test.ts"],

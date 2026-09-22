@@ -25,6 +25,12 @@ export type PutSaveInput = {
   force?: boolean;
 };
 
+/**
+ * How a request proved it may use this player: the anonymous player key, or
+ * an email session for the account that owns it.
+ */
+export type PlayerAccess = { kind: "key" } | { kind: "session"; ownerId: string; epoch: number };
+
 export type PutSaveResult =
   | { ok: true; save: CloudSaveMeta }
   | { ok: false; conflict: CloudSaveMeta };
@@ -56,6 +62,14 @@ const MIGRATIONS: string[] = [
      updated_at  INTEGER NOT NULL,
      received_at INTEGER NOT NULL
    )`,
+  // Set once an email account claims this player. From then on the anonymous
+  // key is refused and only sessions for owner_id on the current epoch work.
+  `CREATE TABLE owner (
+     id         INTEGER PRIMARY KEY CHECK (id = 1),
+     owner_id   TEXT NOT NULL,
+     epoch      INTEGER NOT NULL,
+     claimed_at INTEGER NOT NULL
+   )`,
 ];
 
 export class PlayerSaveDO extends DurableObject<Env> {
@@ -78,6 +92,29 @@ export class PlayerSaveDO extends DurableObject<Env> {
         this.sql.exec("INSERT INTO _migrations (version, applied_at) VALUES (?, ?)", version, Date.now());
       });
     }
+  }
+
+  /** Whether this request may read or write this player's saves. */
+  async authorize(access: PlayerAccess): Promise<boolean> {
+    const owner = this.readOwner();
+    if (access.kind === "key") return owner === null;
+    return owner !== null && owner.owner_id === access.ownerId && owner.epoch === access.epoch;
+  }
+
+  /**
+   * Binds this player to an email account. Idempotent for the same owner (returns
+   * the current session epoch); refused if another account already owns it.
+   */
+  async claim(ownerId: string): Promise<{ ok: true; epoch: number } | { ok: false }> {
+    const owner = this.readOwner();
+    if (owner) return owner.owner_id === ownerId ? { ok: true, epoch: owner.epoch } : { ok: false };
+    this.sql.exec("INSERT INTO owner (id, owner_id, epoch, claimed_at) VALUES (1, ?, 1, ?)", ownerId, Date.now());
+    return { ok: true, epoch: 1 };
+  }
+
+  /** "Sign out everywhere": invalidates every session issued so far for this owner. */
+  async revokeSessions(ownerId: string): Promise<boolean> {
+    return this.sql.exec("UPDATE owner SET epoch = epoch + 1 WHERE id = 1 AND owner_id = ?", ownerId).rowsWritten > 0;
   }
 
   async listSaves(): Promise<CloudSaveMeta[]> {
@@ -129,6 +166,10 @@ export class PlayerSaveDO extends DurableObject<Env> {
 
   async deleteSave(romHash: string): Promise<boolean> {
     return this.sql.exec("DELETE FROM game_saves WHERE rom_hash = ?", romHash).rowsWritten > 0;
+  }
+
+  private readOwner(): { owner_id: string; epoch: number } | null {
+    return this.sql.exec<{ owner_id: string; epoch: number }>("SELECT owner_id, epoch FROM owner WHERE id = 1").toArray()[0] ?? null;
   }
 
   private readRow(romHash: string): SaveRow | null {

@@ -229,15 +229,46 @@ All save routes need `Authorization: Bearer <player key>`. The Worker
 validates sizes (≤ 128 KiB), hash formats and that `sramHash` matches the
 bytes.
 
-## Identity (MVP)
+## Identity
 
-The browser generates a random UUID "player key" (localStorage) and sends it
-as a bearer token. The Worker hashes it to pick the Durable Object, so the key
-itself is never used as an identifier. The key is the only credential: the
-**Saves** panel (click the cloud badge) shows/copies it and lets you paste it
-into another browser to restore your saves. Swapping in real auth means
-replacing `src/worker/identity.ts` (return an account id) and
-`src/client/saves/identity.ts` (send a session instead of the key).
+Two ways to be a player:
+
+- **Anonymous (default).** The browser generates a random UUID "player key"
+  (localStorage) and sends it as a bearer token. The Worker hashes it to pick
+  the Durable Object. The **Saves** panel shows/copies the key and lets you
+  paste it into another browser. Lose the key and those cloud saves are
+  unreachable.
+- **Email sign-in (optional).** Saves panel → *Back up with email* → an
+  8-character code (`K7QM-4XRP`, no 0/O/1/I/L) is emailed from
+  `login@pocketcloud.app` via Cloudflare Email Service. Redeeming it links
+  the email to the browser's current player, so existing cloud saves become
+  the account's. Any other browser that signs in with the same email gets the
+  same player; conflicting local saves go through the usual "ask" screen.
+
+| | |
+|---|---|
+| `POST /api/auth/request` `{email}` | emails a code; same answer whether or not the account exists |
+| `POST /api/auth/verify` `{email, code}` | redeems it, sets the session cookie |
+| `GET /api/auth/me` | `{email}` or 401; renews the cookie past half its life |
+| `POST /api/auth/logout` `{everywhere?}` | clears the cookie; `everywhere` revokes every session |
+
+Security model:
+
+- `AuthDO`, one per email (`auth:<sha256(email)>`), stores only a SHA-256 of
+  the pending code, never the email. Codes come from `crypto.getRandomValues`,
+  expire after 10 minutes, are single-use and die after 5 wrong tries.
+  Limits: 1 code/minute and 5/hour per email, plus 10 requests/minute per IP
+  on `/request` and `/verify` (`AUTH_LIMITER` rate-limit binding).
+- The session is a cookie `__Host-pc_session` (HttpOnly, Secure,
+  SameSite=Lax, 30 days) holding `{pid, oid, em, ep, exp}` signed with
+  HMAC-SHA256 using the `SESSION_SECRET` secret. `ep` must match the epoch in
+  the player's `PlayerSaveDO`; "sign out on all devices" bumps it. Local dev
+  uses `pc_session` because Chrome refuses `__Host-` on http://localhost.
+- Once an account claims a player, `PlayerSaveDO` refuses its anonymous key
+  (`401 key_retired`) and the browser switches to a fresh key. A forged or
+  expired cookie is a 401, never a silent fallback to the key.
+- State-changing `/api/*` requests from another origin are rejected (`Origin`
+  / `Sec-Fetch-Site`), and auth bodies must be small `application/json`.
 
 ## Deployment
 
@@ -299,10 +330,9 @@ still persist locally and upload when back online).
   the origin's storage quota.
 - Only one emulator instance per page (binjgb's JS wrapper keeps the active
   core in a C global).
-- The player key is a bearer secret with no recovery if lost; anyone who has
-  it can read/overwrite that player's saves. Fine for an MVP, not for
-  production.
-- No rate limiting on the API.
+- Anonymous players: the player key is a bearer secret with no recovery if
+  lost. Sign in with email to avoid that.
+- Only the sign-in endpoints are rate limited, not the saves API.
 - Audio uses scheduled `AudioBufferSource`s (like upstream), not an
   AudioWorklet; very slow devices may crackle.
 - Some games write SRAM over several frames; a capture can occasionally land

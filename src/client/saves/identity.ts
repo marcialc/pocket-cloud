@@ -27,3 +27,12 @@ export function setPlayerKey(key: string): boolean {
   localStorage.setItem(STORAGE_KEY, trimmed);
   return true;
 }
+
+/**
+ * Replaces this browser's anonymous key with a fresh one. Called after email
+ * sign-in: the old key's player now belongs to the account and the server
+ * refuses the key, so it must not linger here.
+ */
+export function resetPlayerKey(): void {
+  localStorage.setItem(STORAGE_KEY, crypto.randomUUID());
+}
