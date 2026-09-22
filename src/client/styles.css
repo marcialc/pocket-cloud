@@ -283,12 +283,13 @@ kbd.empty { color: var(--ink-2); }
 .sign-in-sent { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--ink-2); }
 .sign-in-sent strong { color: var(--ink); word-break: break-all; }
 .code-boxes { display: flex; justify-content: space-between; gap: 6px; padding: 8px 4px; }
-.code-cell { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.code-cell:has(.code-dash) { flex: 1.4; }
+.code-cell { display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 0; }
+/* Exactly the dash + gap wider, so its box matches the others at any width. */
+.code-cell:has(.code-dash) { flex: 1 1 16px; }
 .code-dash { flex: 0 0 10px; height: 4px; background: var(--ink-2); border-radius: 2px; }
 .code-box {
   width: 100%; min-width: 0; max-width: 48px; aspect-ratio: 5 / 6; padding: 0; border: 0; border-radius: 7px;
-  text-align: center; text-transform: uppercase; font: clamp(14px, 4.4vw, 20px) var(--pixel);
+  text-align: center; text-transform: uppercase; font: clamp(16px, 4.4vw, 20px) var(--pixel);
   color: var(--lcd-dark); caret-color: var(--accent);
   background-color: var(--lcd-light);
   background-image: radial-gradient(rgba(47, 59, 44, 0.18) 0.8px, transparent 1px);
@@ -622,7 +623,7 @@ kbd.empty { color: var(--ink-2); }
   box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.22), 0 5px 0 #5f1629, 0 7px 10px rgba(0, 0, 0, 0.25);
 }
 .round .touch-btn.pressed { transform: translateY(4px); background: #86223b; box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.35), 0 1px 0 #5f1629; }
-.touch-btn-wrap.pill { min-width: 76px; min-height: 56px; justify-content: center; }
+.touch-btn-wrap.pill { min-width: 76px; min-height: 56px; justify-content: center; gap: 22px; }
 .pill .touch-btn {
   width: 56px; height: 16px; border-radius: 999px; background: #7d776b; transform: rotate(-25deg);
   box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 3px 0 #55504a;
@@ -658,6 +659,7 @@ kbd.empty { color: var(--ink-2); }
   .game {
     gap: 8px; align-items: stretch; color: var(--ink);
     padding: max(10px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    position: relative; overflow: hidden; touch-action: manipulation;
     background-color: var(--shell);
     background-image:
       radial-gradient(rgba(70, 60, 50, 0.08) 0.6px, transparent 0.9px),
@@ -673,7 +675,8 @@ kbd.empty { color: var(--ink-2); }
   .badge-button { font-size: 8px; }
 
   .game-bar { padding: 0 8px; }
-  .stage { --chrome-x: 16px; --chrome-y: 30px; flex: 0 0 auto; height: min(56dvh, calc((100vw - 16px) * 0.9 + 30px)); }
+  /* Phones scale in whole device pixels (see GameScreen), so the LCD can be 1.5x on a 2x screen. */
+  .stage { --chrome-x: 16px; --chrome-y: 30px; --device-px: 1; flex: 0 1 auto; height: min(56dvh, calc((100vw - 16px) * 0.9 + 30px)); }
   .shell { padding: 0; gap: 0; background: none; box-shadow: none; border-radius: 0; }
   .shell-top, .shell-foot { display: none; }
   .bezel { padding: 8px 8px 22px; border-radius: 10px 10px 30px 10px; }
@@ -681,21 +684,26 @@ kbd.empty { color: var(--ink-2); }
   .power .led { width: 7px; height: 7px; }
 
   .touch-controls {
-    display: grid; flex: 1; min-height: 0; align-content: center;
-    grid-template-columns: 1fr auto; grid-template-areas: "dpad face" "menu menu" "grille grille";
+    display: grid; flex: 1 0 auto; align-content: center;
+    grid-template-columns: 1fr auto; grid-template-areas: "dpad face" "menu menu";
     row-gap: 18px; padding: 8px 4px 0;
   }
   .dpad { grid-area: dpad; }
   .face-buttons { grid-area: face; }
   .menu-buttons { grid-area: menu; }
-  .grille { grid-area: grille; }
+  /* Decoration only: sits in the corner instead of taking a row. */
+  .grille { position: absolute; right: max(18px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); pointer-events: none; }
+}
+@media (max-width: 359px) {
+  /* No room beside Start on the narrowest phones. */
+  .grille { display: none; }
 }
 
 @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
   .game {
     display: grid; gap: 4px 16px;
     grid-template-columns: 1fr auto 1fr; grid-template-rows: auto minmax(0, 1fr) auto;
-    grid-template-areas: "bar bar bar" "dpad stage face" "dpad menu face";
+    grid-template-areas: "bar bar bar" "dpad stage face" "dpad stage menu";
   }
   .game-bar { grid-area: bar; min-height: 40px; }
   .stage { grid-area: stage; --chrome-x: 16px; --chrome-y: 30px; height: 100%; }
@@ -705,6 +713,6 @@ kbd.empty { color: var(--ink-2); }
   .touch-controls { display: contents; }
   .dpad { grid-area: dpad; align-self: center; justify-self: center; }
   .face-buttons { grid-area: face; align-self: center; justify-self: center; }
-  .menu-buttons { grid-area: menu; }
+  .menu-buttons { grid-area: menu; align-self: end; }
   .grille { display: none; }
 }

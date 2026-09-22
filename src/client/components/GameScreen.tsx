@@ -29,6 +29,8 @@ type Props = {
 const LCD_W = 160;
 const LCD_H = 144;
 const DIM_AFTER_MS = 2500;
+// iPhone Safari can't make a page element fullscreen, so the button is hidden there.
+const CAN_FULLSCREEN = document.fullscreenEnabled === true;
 
 export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
   const root = useRef<HTMLDivElement>(null);
@@ -105,6 +107,7 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
   useEffect(() => sync?.setCloudEnabled(prefs.cloudSync), [sync, prefs.cloudSync]);
 
   // Largest whole-number scale that fits: every LCD pixel stays the same size.
+  // Phones (--device-px) count whole device pixels instead, e.g. 1.5x on a 2x screen.
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
@@ -114,7 +117,8 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
       const chromeY = parseFloat(css.getPropertyValue("--chrome-y")) || 0;
       const w = el.clientWidth - chromeX;
       const h = el.clientHeight - chromeY;
-      setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H))));
+      const step = css.getPropertyValue("--device-px").trim() === "1" ? window.devicePixelRatio || 1 : 1;
+      setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H) * step) / step));
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -344,9 +348,11 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
           </button>
           <VolumeSlider prefs={prefs} onPrefs={onPrefs} />
           <span className="sep" aria-hidden />
-          <button type="button" className="ibtn tip" data-tip="Fullscreen" aria-label="Fullscreen" onClick={toggleFullscreen}>
-            <Icon name="fullscreen" />
-          </button>
+          {CAN_FULLSCREEN && (
+            <button type="button" className="ibtn tip" data-tip="Fullscreen" aria-label="Fullscreen" onClick={toggleFullscreen}>
+              <Icon name="fullscreen" />
+            </button>
+          )}
           <button type="button" className="ibtn tip" data-tip="Controls" aria-label="Controls" onClick={() => setPanel("controls")}>
             <Icon name="gamepad" size={22} />
           </button>
@@ -401,9 +407,11 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
                   <button type="button" className="tile" onClick={() => onPrefs({ muted: !prefs.muted })}>
                     <Icon name={muted ? "soundOff" : "soundOn"} size={22} /> {prefs.muted ? "Unmute" : "Mute"}
                   </button>
-                  <button type="button" className="tile" onClick={toggleFullscreen}>
-                    <Icon name="fullscreen" size={22} /> Fullscreen
-                  </button>
+                  {CAN_FULLSCREEN && (
+                    <button type="button" className="tile" onClick={toggleFullscreen}>
+                      <Icon name="fullscreen" size={22} /> Fullscreen
+                    </button>
+                  )}
                   <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("controls"))}>
                     <Icon name="gamepad" size={24} /> Controls
                   </button>
