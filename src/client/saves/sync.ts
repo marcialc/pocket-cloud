@@ -19,7 +19,20 @@ export type LaunchDecision =
   | { use: "ask"; recommended: "cloud" | "local" };
 
 export function hasUnsyncedChanges(local: LocalGameSave): boolean {
-  return local.cloud?.sramHash !== local.sramHash;
+  if (local.cloud?.sramHash !== local.sramHash) return true;
+  // An older save that just got its clock base: the cloud needs it too.
+  return local.rtcBase !== undefined && local.cloud.rtcBase === undefined;
+}
+
+/** What this device records after seeing `cloud` hold the same bytes as `local`. */
+export function matchCloud(local: LocalGameSave, cloud: CloudSaveMeta): LocalGameSave {
+  // The cloud's clock base wins, so every device shows the same in-game time.
+  const rtcBase = cloud.rtcBase ?? local.rtcBase;
+  return {
+    ...local,
+    ...(rtcBase !== undefined ? { rtcBase } : {}),
+    cloud: { revision: cloud.revision, sramHash: cloud.sramHash, ...(cloud.rtcBase !== undefined ? { rtcBase: cloud.rtcBase } : {}) },
+  };
 }
 
 export function decideLaunch(local: LocalGameSave | null, cloud: CloudSaveMeta | null): LaunchDecision {

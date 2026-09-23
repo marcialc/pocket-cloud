@@ -62,6 +62,26 @@ describe("HTTP API", () => {
     expect(list.saves).toHaveLength(1);
   });
 
+  it("keeps the cartridge clock base with the save", async () => {
+    const key = playerKey();
+    await put(key, await putBody(new Uint8Array([1]), { rtcBase: 1_234 }));
+    expect(await (await get(key)).json()).toMatchObject({ rtcBase: 1_234 });
+    // A client that doesn't send one (older version) must not erase it.
+    await put(key, await putBody(new Uint8Array([2]), { baseRevision: 1 }));
+    expect(await (await get(key)).json()).toMatchObject({ revision: 2, rtcBase: 1_234 });
+    expect((await put(key, await putBody(new Uint8Array([3]), { baseRevision: 2, rtcBase: -1 }))).status).toBe(400);
+  });
+
+  it("stores the first clock base sent for a save that has none, without a new revision", async () => {
+    const key = playerKey();
+    await put(key, await putBody(new Uint8Array([1])));
+    const first = await put(key, await putBody(new Uint8Array([1]), { baseRevision: 1, rtcBase: 1_000 }));
+    expect(await first.json()).toMatchObject({ ok: true, save: { revision: 1, rtcBase: 1_000 } });
+    // A second device's base for the same bytes loses; the response tells it which one won.
+    const second = await put(key, await putBody(new Uint8Array([1]), { baseRevision: 1, rtcBase: 2_000 }));
+    expect(await second.json()).toMatchObject({ ok: true, save: { revision: 1, rtcBase: 1_000 } });
+  });
+
   it("isolates players", async () => {
     const a = playerKey();
     await put(a, await putBody(new Uint8Array([1, 2, 3])));

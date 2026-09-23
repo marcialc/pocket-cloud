@@ -3,7 +3,7 @@ import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
 import type { RomInfo } from "../emulator/rom";
 import { CloudUnavailableError, fetchCloudSave, pushCloudSave, type CloudSave } from "./cloudApi";
 import { putLocalSave, type LocalGameSave } from "./localSaves";
-import { decideLaunch, hasUnsyncedChanges, nextPushDelay, resolvePushConflict, retryDelay, type LaunchDecision } from "./sync";
+import { decideLaunch, hasUnsyncedChanges, matchCloud, nextPushDelay, resolvePushConflict, retryDelay, type LaunchDecision } from "./sync";
 
 /**
  * Pipeline: game writes SRAM -> emulator notifies (<=1/s) -> compare bytes ->
@@ -54,7 +54,8 @@ export function localFromCloud(cloud: CloudSave): LocalGameSave {
     sramHash: cloud.sramHash,
     updatedAt: cloud.updatedAt,
     playTime: cloud.playTime ?? 0,
-    cloud: { revision: cloud.revision, sramHash: cloud.sramHash },
+    ...(cloud.rtcBase !== undefined ? { rtcBase: cloud.rtcBase } : {}),
+    cloud: { revision: cloud.revision, sramHash: cloud.sramHash, ...(cloud.rtcBase !== undefined ? { rtcBase: cloud.rtcBase } : {}) },
   };
 }
 
@@ -77,10 +78,22 @@ export class SaveSync {
     private readonly rom: RomInfo,
     initial: LocalGameSave | null,
     private cloudEnabled: boolean,
+    /** The cartridge clock base the emulator was started with (see emulator/rtc.ts). */
+    private rtcBase: number,
   ) {
     this.local = initial;
+    if (initial && initial.rtcBase !== this.rtcBase) {
+      // Older save without a clock base: keep the one this boot chose, so the clock stops restarting.
+      this.local = { ...initial, rtcBase: this.rtcBase };
+      putLocalSave(this.local).catch((err) => console.error("could not store the clock base", err));
+    }
     this.status = cloudEnabled ? { state: "idle" } : { state: "local-only" };
     this.unsubscribe = emulator.onSramWrite(() => void this.capture());
+    // Bytes already in the cloud but the clock base isn't: send it now rather than at the next
+    // in-game save, so a second device picks it up instead of choosing its own.
+    if (this.local && this.local.cloud?.sramHash === this.local.sramHash && hasUnsyncedChanges(this.local)) {
+      this.schedulePush(0);
+    }
   }
 
   getStatus(): SyncStatus {
@@ -95,6 +108,11 @@ export class SaveSync {
   subscribe(listener: (s: SyncStatus) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** The cartridge clock base belonging to the current save. */
+  getRtcBase(): number {
+    return this.rtcBase;
   }
 
   /** Track play time while the emulator runs. */
@@ -148,6 +166,8 @@ export class SaveSync {
     const cloud = await fetchCloudSave(this.rom.romHash);
     if (!cloud) return null;
     this.local = localFromCloud(cloud);
+    // A cloud save from before the clock was emulated keeps this device's clock.
+    this.rtcBase = this.local.rtcBase ??= this.rtcBase;
     await putLocalSave(this.local);
     this.setStatus({ state: "synced", at: Date.now() });
     return cloud.sram;
@@ -181,6 +201,7 @@ export class SaveSync {
       sramHash,
       updatedAt: Date.now(),
       playTime: this.local?.playTime ?? 0,
+      rtcBase: this.rtcBase,
       cloud: this.local?.cloud ?? null,
     };
     await putLocalSave(this.local);
@@ -236,6 +257,7 @@ export class SaveSync {
           sramHash: local.sramHash,
           updatedAt: local.updatedAt,
           playTime: Math.round(local.playTime),
+          ...(local.rtcBase !== undefined ? { rtcBase: local.rtcBase } : {}),
           baseRevision: local.cloud?.revision ?? null,
           ...(force ? { force: true } : {}),
         },
@@ -267,7 +289,13 @@ export class SaveSync {
 
   private async recordCloud(meta: CloudSaveMeta): Promise<void> {
     if (!this.local) return;
-    this.local.cloud = { revision: meta.revision, sramHash: meta.sramHash };
+    if (meta.sramHash === this.local.sramHash) {
+      // If another device's clock base got there first, it wins; this session's clock picks it up at the next boot.
+      this.local = matchCloud(this.local, meta);
+      this.rtcBase = this.local.rtcBase ?? this.rtcBase;
+    } else {
+      this.local.cloud = { revision: meta.revision, sramHash: meta.sramHash, ...(meta.rtcBase !== undefined ? { rtcBase: meta.rtcBase } : {}) };
+    }
     await putLocalSave(this.local);
     if (hasUnsyncedChanges(this.local)) {
       // The game saved again while we were uploading.

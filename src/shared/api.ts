@@ -23,6 +23,8 @@ export type CloudSaveMeta = {
   /** Client wall-clock time at which this SRAM content was produced. */
   updatedAt: number;
   playTime?: number;
+  /** Wall-clock time at which the cartridge's real-time clock read zero. */
+  rtcBase?: number;
 };
 
 export type CloudSaveResponse = CloudSaveMeta & {
@@ -36,6 +38,7 @@ export type PutSaveRequest = {
   sramHash: string;
   updatedAt: number;
   playTime?: number;
+  rtcBase?: number;
   /**
    * The cloud revision this write is based on (null = "I have never seen a
    * cloud save for this ROM"). If it does not match the server's current
@@ -93,4 +96,31 @@ export function base64ToBytes(base64: string): Uint8Array {
 export async function sha256Hex(data: ArrayBuffer | Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data as BufferSource);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Account-wide settings for a signed-in player. Only the keyboard controls for
+ * now; `keyBindings` is null until the account has saved some.
+ */
+export type SettingsResponse = { keyBindings: Record<string, string[]> | null };
+
+export type PutSettingsRequest = { keyBindings: Record<string, string[]> };
+
+/**
+ * Structural check for stored key bindings (button -> KeyboardEvent.code list).
+ * The client still sanitizes what it loads, so this only keeps junk and bulk out.
+ */
+export function isKeyBindings(value: unknown): value is Record<string, string[]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return (
+    entries.length <= 16 &&
+    entries.every(
+      ([button, codes]) =>
+        /^[a-z]{1,16}$/.test(button) &&
+        Array.isArray(codes) &&
+        codes.length <= 8 &&
+        codes.every((c) => typeof c === "string" && c.length > 0 && c.length <= 32),
+    )
+  );
 }

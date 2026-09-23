@@ -3,14 +3,18 @@ import {
   MAX_SRAM_BYTES,
   base64ToBytes,
   bytesToBase64,
+  isKeyBindings,
   sha256Hex,
   type CloudSaveResponse,
   type ListSavesResponse,
   type PutSaveRequest,
   type PutSaveResponse,
+  type PutSettingsRequest,
+  type SettingsResponse,
 } from "../shared/api";
 import { handleAuth } from "./auth/routes";
 import { clearSessionCookie } from "./auth/session";
+import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
 import { isCrossSite, json, methodNotAllowed } from "./http";
 import { authenticate } from "./identity";
 import { handleRoms } from "./roms";
@@ -27,6 +31,8 @@ export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
  *   PUT    /api/saves/:romHash     upload SRAM (optimistic concurrency via baseRevision)
  *   DELETE /api/saves/:romHash     delete one save
  *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
+ *   GET    /api/settings           account-wide settings (email sign-in only)
+ *   PUT    /api/settings           replace them
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *
  * Saves routes accept either an email session cookie or the anonymous player
@@ -54,7 +60,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
   if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
-  if (!roms && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  const settings = path === "/api/settings";
+  if (!roms && !settings && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
 
   const identity = await authenticate(request, env);
   if ("error" in identity) {
@@ -71,6 +78,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // ROMs are stored only for accounts, never for an anonymous key.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
     return handleRoms(request, env, url, identity.playerId);
+  }
+  if (settings) {
+    // Settings follow the account; an anonymous key keeps them on its device.
+    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
+    return handleSettings(request, stub);
   }
 
   if (path === "/api/saves") {
@@ -101,6 +113,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         updatedAt: body.updatedAt,
         baseRevision: body.baseRevision,
         ...(body.playTime !== undefined ? { playTime: body.playTime } : {}),
+        ...(body.rtcBase !== undefined ? { rtcBase: body.rtcBase } : {}),
         ...(body.force ? { force: true } : {}),
       });
       return json(result satisfies PutSaveResponse, result.ok ? 200 : 409);
@@ -108,6 +121,34 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     case "DELETE": {
       const deleted = await stub.deleteSave(romHash);
       return deleted ? new Response(null, { status: 204 }) : json({ error: "not_found" }, 404);
+    }
+    default:
+      return methodNotAllowed();
+  }
+}
+
+const KEY_BINDINGS = "key_bindings";
+const MAX_SETTINGS_BYTES = 4096;
+
+async function handleSettings(request: Request, stub: DurableObjectStub<PlayerSaveDO>): Promise<Response> {
+  switch (request.method) {
+    case "GET": {
+      const stored = await stub.getSetting(KEY_BINDINGS);
+      return json({ keyBindings: stored ? JSON.parse(stored) : null } satisfies SettingsResponse);
+    }
+    case "PUT": {
+      if (Number(request.headers.get("Content-Length") ?? 0) > MAX_SETTINGS_BYTES) return json({ error: "payload_too_large" }, 400);
+      let body: PutSettingsRequest;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "invalid_json" }, 400);
+      }
+      if (typeof body !== "object" || body === null || !isKeyBindings(body.keyBindings)) {
+        return json({ error: "invalid_key_bindings" }, 400);
+      }
+      await stub.putSetting(KEY_BINDINGS, JSON.stringify(body.keyBindings));
+      return new Response(null, { status: 204 });
     }
     default:
       return methodNotAllowed();
@@ -138,6 +179,9 @@ async function parsePut(
   if (body.baseRevision !== null && !Number.isSafeInteger(body.baseRevision)) return { error: "invalid_base_revision" };
   if (body.playTime !== undefined && (!Number.isSafeInteger(body.playTime) || body.playTime < 0)) {
     return { error: "invalid_play_time" };
+  }
+  if (body.rtcBase !== undefined && (!Number.isSafeInteger(body.rtcBase) || body.rtcBase <= 0)) {
+    return { error: "invalid_rtc_base" };
   }
 
   let sram: Uint8Array;

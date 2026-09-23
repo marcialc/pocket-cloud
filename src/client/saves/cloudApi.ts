@@ -7,6 +7,8 @@ import {
   type ListSavesResponse,
   type PutSaveRequest,
   type PutSaveResponse,
+  type PutSettingsRequest,
+  type SettingsResponse,
 } from "../../shared/api";
 import { getPlayerKey } from "./identity";
 
@@ -117,4 +119,16 @@ export async function downloadCloudRom(romHash: string): Promise<ArrayBuffer | n
 export async function deleteCloudRom(romHash: string): Promise<void> {
   const res = await call(`/roms/${romHash}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw await romError(res);
+}
+
+/** The signed-in account's settings (keyBindings null until it has saved some). */
+export async function fetchCloudSettings(): Promise<SettingsResponse> {
+  const res = await call("/settings");
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+  return res.json();
+}
+
+export async function putCloudSettings(settings: PutSettingsRequest): Promise<void> {
+  const res = await call("/settings", { method: "PUT", body: JSON.stringify(settings) });
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
 }

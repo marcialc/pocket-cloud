@@ -1,5 +1,6 @@
 import type { GameBoyButton, GameBoyEmulator } from "./GameBoyEmulator";
 import { loadBinjgb, type BinjgbModule } from "./binjgbModule";
+import { hasRtc, rtcRegisters } from "./rtc";
 
 /**
  * GameBoyEmulator adapter for binjgb (https://github.com/binji/binjgb).
@@ -40,6 +41,10 @@ export class BinjgbEmulator implements GameBoyEmulator {
   private romSize = 0;
   private joypadPtr = 0;
   private rom: ArrayBuffer | null = null;
+  /** Wall-clock time the cartridge clock read zero (see rtc.ts); null until setClock(). */
+  private clockBase: number | null = null;
+  /** The game has run since the core was created, so the mapper is no longer in its power-on state. */
+  private coreStarted = false;
   private destroyed = false;
 
   private readonly ctx2d: CanvasRenderingContext2D;
@@ -88,12 +93,14 @@ export class BinjgbEmulator implements GameBoyEmulator {
     this.module = module;
     this.destroyCore();
     this.rom = rom.slice(0);
+    this.clockBase = null;
     this.createCore();
   }
 
   start(): void {
     this.requireCore();
     if (this.running) return;
+    this.coreStarted = true;
     this.lastRafSec = 0;
     this.leftoverTicks = 0;
     this.audioStartSec = 0;
@@ -116,6 +123,8 @@ export class BinjgbEmulator implements GameBoyEmulator {
     this.destroyCore();
     this.createCore();
     if (sram) this.loadSram(sram);
+    // A power cycle doesn't stop the cartridge clock; this also corrects any drift.
+    this.applyClock();
     for (const button of this.pressed) this.setButton(button, true);
     if (wasRunning) this.start();
   }
@@ -160,6 +169,13 @@ export class BinjgbEmulator implements GameBoyEmulator {
     this.flushSramNotification();
   }
 
+  setClock(baseMs: number): void {
+    this.requireCore();
+    this.clockBase = baseMs;
+    // Writing the clock clobbers mapper state the running game relies on; reset() applies it instead.
+    if (!this.coreStarted) this.applyClock();
+  }
+
   setVolume(volume: number): void {
     this.volume = Math.min(1, Math.max(0, volume));
     this.applyGain();
@@ -199,6 +215,7 @@ export class BinjgbEmulator implements GameBoyEmulator {
     this.romPtr = m._malloc(this.romSize);
     m.HEAPU8.fill(0, this.romPtr, this.romPtr + this.romSize);
     m.HEAPU8.set(rom, this.romPtr);
+    this.coreStarted = false;
     this.e = m._emulator_new_simple(this.romPtr, this.romSize, this.audioCtx.sampleRate, AUDIO_FRAMES, CGB_COLOR_CURVE);
     if (!this.e) {
       m._free(this.romPtr);
@@ -235,6 +252,37 @@ export class BinjgbEmulator implements GameBoyEmulator {
     } finally {
       m._file_data_delete(fileData);
     }
+  }
+
+  /**
+   * Writes the clock registers the same way a game sets the time: enable RAM,
+   * latch (binjgb ignores clock writes unless latched), select each register at
+   * 0x4000 and write it at 0xA000. Only safe before the game runs its first
+   * instruction; the mapper is then put back in its power-on state.
+   * binjgb keeps counting from here in emulated time.
+   */
+  private applyClock(): void {
+    const m = this.module!;
+    if (this.clockBase === null || !hasRtc(new Uint8Array(this.rom!)[0x147]!)) return;
+    const { sec, min, hour, day, carry } = rtcRegisters(this.clockBase, Date.now());
+    const write = (address: number, value: number) => m._emulator_write_mem(this.e, address, value);
+    write(0x0000, 0x0a);
+    write(0x6000, 0x00);
+    write(0x6000, 0x01);
+    for (const [register, value] of [
+      [0x08, sec],
+      [0x09, min],
+      [0x0a, hour],
+      [0x0b, day & 0xff],
+      // Day bit 8, carry in bit 7; halt (bit 6) stays clear so the clock runs.
+      [0x0c, (day >> 8) | (carry ? 0x80 : 0)],
+    ] as const) {
+      write(0x4000, register);
+      write(0xa000, value);
+    }
+    write(0x4000, 0x00);
+    write(0x6000, 0x00);
+    write(0x0000, 0x00);
   }
 
   private setButton(button: GameBoyButton, down: boolean): void {

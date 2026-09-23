@@ -20,6 +20,7 @@ export interface BinjgbModule {
   _emulator_read_ext_ram(e: number, fileData: number): number;
   _emulator_write_ext_ram(e: number, fileData: number): number;
   _emulator_read_mem(e: number, address: number): number;
+  _emulator_write_mem(e: number, address: number, value: number): void;
   _emulator_set_default_joypad_callback(e: number, joypadBuffer: number): void;
   _ext_ram_file_data_new(e: number): number;
   _file_data_delete(fileData: number): void;

@@ -21,6 +21,7 @@ export type PutSaveInput = {
   sramHash: string;
   updatedAt: number;
   playTime?: number;
+  rtcBase?: number;
   baseRevision: number | null;
   force?: boolean;
 };
@@ -42,6 +43,7 @@ type SaveRow = {
   sram_hash: string;
   revision: number;
   play_time: number | null;
+  rtc_base: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -69,6 +71,14 @@ const MIGRATIONS: string[] = [
      owner_id   TEXT NOT NULL,
      epoch      INTEGER NOT NULL,
      claimed_at INTEGER NOT NULL
+   )`,
+  // When the cartridge's real-time clock read zero (Pokémon Gold/Silver/Crystal).
+  `ALTER TABLE game_saves ADD COLUMN rtc_base INTEGER`,
+  // Account-wide preferences (e.g. "key_bindings"), one JSON value per name.
+  `CREATE TABLE settings (
+     name       TEXT PRIMARY KEY,
+     value      TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
    )`,
 ];
 
@@ -133,8 +143,16 @@ export class PlayerSaveDO extends DurableObject<Env> {
     const existing = this.readRow(input.romHash);
     if (existing) {
       const current = toMeta(existing);
-      // Same bytes already stored: idempotent success (e.g. a retried request).
-      if (existing.sram_hash === input.sramHash) return { ok: true, save: current };
+      if (existing.sram_hash === input.sramHash) {
+        // An older save getting its clock base. The first one stored wins, so every
+        // device converges on it (the response tells the client which one that is).
+        if (existing.rtc_base == null && input.rtcBase !== undefined) {
+          this.sql.exec("UPDATE game_saves SET rtc_base = ? WHERE rom_hash = ?", input.rtcBase, input.romHash);
+          return { ok: true, save: toMeta(this.readRow(input.romHash)!) };
+        }
+        // Same bytes already stored: idempotent success (e.g. a retried request).
+        return { ok: true, save: current };
+      }
       if (!input.force && input.baseRevision !== existing.revision) {
         return { ok: false, conflict: current };
       }
@@ -145,11 +163,12 @@ export class PlayerSaveDO extends DurableObject<Env> {
     const createdAt = existing?.created_at ?? now;
     this.sql.exec(
       `INSERT INTO game_saves
-         (rom_hash, game_id, sram, sram_hash, revision, play_time, created_at, updated_at, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (rom_hash, game_id, sram, sram_hash, revision, play_time, rtc_base, created_at, updated_at, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (rom_hash) DO UPDATE SET
          game_id = excluded.game_id, sram = excluded.sram, sram_hash = excluded.sram_hash,
          revision = excluded.revision, play_time = excluded.play_time,
+         rtc_base = COALESCE(excluded.rtc_base, game_saves.rtc_base),
          updated_at = excluded.updated_at, received_at = excluded.received_at`,
       input.romHash,
       input.gameId,
@@ -157,6 +176,7 @@ export class PlayerSaveDO extends DurableObject<Env> {
       input.sramHash,
       revision,
       input.playTime ?? null,
+      input.rtcBase ?? null,
       createdAt,
       input.updatedAt,
       now,
@@ -166,6 +186,21 @@ export class PlayerSaveDO extends DurableObject<Env> {
 
   async deleteSave(romHash: string): Promise<boolean> {
     return this.sql.exec("DELETE FROM game_saves WHERE rom_hash = ?", romHash).rowsWritten > 0;
+  }
+
+  /** A stored setting's JSON value, or null if it was never set. */
+  async getSetting(name: string): Promise<string | null> {
+    return this.sql.exec<{ value: string }>("SELECT value FROM settings WHERE name = ?", name).toArray()[0]?.value ?? null;
+  }
+
+  async putSetting(name: string, value: string): Promise<void> {
+    this.sql.exec(
+      `INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      name,
+      value,
+      Date.now(),
+    );
   }
 
   private readOwner(): { owner_id: string; epoch: number } | null {
@@ -187,5 +222,6 @@ function toMeta(row: SaveRow): CloudSaveMeta {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.play_time != null ? { playTime: row.play_time } : {}),
+    ...(row.rtc_base != null ? { rtcBase: row.rtc_base } : {}),
   };
 }

@@ -9,6 +9,8 @@ export type CloudSyncState = {
   revision: number;
   /** SRAM hash stored in the cloud at that revision. */
   sramHash: string;
+  /** Cartridge clock base the cloud had (see LocalGameSave.rtcBase). */
+  rtcBase?: number;
 };
 
 export type LocalGameSave = {
@@ -20,6 +22,12 @@ export type LocalGameSave = {
   updatedAt: number;
   /** Milliseconds of emulation accumulated with this save. */
   playTime: number;
+  /**
+   * Wall-clock time at which the cartridge's real-time clock read zero (see
+   * emulator/rtc.ts): the clock chip's battery, kept with the save it belongs to.
+   * Missing on saves made before the clock was emulated.
+   */
+  rtcBase?: number;
   cloud: CloudSyncState | null;
 };
 

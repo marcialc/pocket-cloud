@@ -11,6 +11,7 @@ import { RomError, displayName, inspectRom, type RomInfo } from "./emulator/rom"
 import { loadPreferences, resetCloudRomsChoice, savePreferences, type Preferences } from "./preferences";
 import { fetchAccount, signOut } from "./saves/authApi";
 import { deleteCloudRom, downloadCloudRom, listCloudRoms } from "./saves/cloudApi";
+import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
 import {
   clearCloudSyncState,
@@ -35,6 +36,7 @@ import {
   resetBackUpState,
 } from "./saves/romLibrary";
 import { localFromCloud, planLaunch, type LaunchPlan } from "./saves/SaveSync";
+import { matchCloud } from "./saves/sync";
 import { bindUiSounds } from "./uiSound";
 
 export type Session = {
@@ -58,6 +60,8 @@ export function App() {
   const [library, setLibrary] = useState<RomSummary[] | null>(null);
   // Signed-in email; undefined while checking, null when signed out.
   const [account, setAccount] = useState<string | null | undefined>(undefined);
+  const accountRef = useRef(account);
+  accountRef.current = account;
   // Games kept in the account; null while loading, when signed out, cloud backup is off, or the cloud can't be reached.
   const [cloud, setCloud] = useState<ListRomsResponse | null>(null);
   const cloudRoms = cloud?.roms ?? null;
@@ -144,13 +148,35 @@ export function App() {
     setAccount(null);
   }, []);
 
-  const updatePrefs = useCallback((patch: Partial<Preferences>) => {
+  const storePrefs = useCallback((patch: Partial<Preferences>) => {
     setPrefs((prev) => {
       const next = { ...prev, ...patch };
       savePreferences(next);
       return next;
     });
   }, []);
+
+  const updatePrefs = useCallback(
+    (patch: Partial<Preferences>) => {
+      storePrefs(patch);
+      // Signed in: the controls follow the account to other browsers.
+      if (patch.keyBindings && accountRef.current) void pushKeyBindings(accountRef.current, patch.keyBindings);
+    },
+    [storePrefs],
+  );
+
+  // Signed in: use the account's controls (or give it this browser's if it has none yet).
+  useEffect(() => {
+    if (!account) return;
+    let stale = false;
+    syncKeyBindings(account, loadPreferences().keyBindings).then(
+      (keyBindings) => !stale && keyBindings && storePrefs({ keyBindings }),
+      (err) => console.warn("Could not load the controls from the account", err),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [account, storePrefs]);
 
   const openRom = useCallback(
     /** `picked`: the player chose this file just now (not from the library). */
@@ -187,9 +213,14 @@ export function App() {
         let local = await getLocalSave(rom.romHash);
         const plan = await planLaunch(local, rom.romHash, prefs.cloudSync);
         const d = plan.decision;
-        if (local && plan.cloud && plan.cloud.sramHash === local.sramHash && local.cloud?.revision !== plan.cloud.revision) {
-          // Same bytes on both sides: just remember the cloud revision we match.
-          local = { ...local, cloud: { revision: plan.cloud.revision, sramHash: plan.cloud.sramHash } };
+        if (
+          local &&
+          plan.cloud &&
+          plan.cloud.sramHash === local.sramHash &&
+          (local.cloud?.revision !== plan.cloud.revision || (plan.cloud.rtcBase !== undefined && plan.cloud.rtcBase !== local.rtcBase))
+        ) {
+          // Same bytes on both sides: remember the cloud revision we match, and use its clock base.
+          local = matchCloud(local, plan.cloud);
           await putLocalSave(local);
         }
         if (d.use === "ask") {
@@ -335,6 +366,7 @@ export function App() {
           {panel === "controls" && (
             <ControlsPanel
               bindings={prefs.keyBindings}
+              signedIn={!!account}
               onChange={(keyBindings) => updatePrefs({ keyBindings })}
               onClose={() => setPanel(null)}
             />
@@ -358,6 +390,7 @@ export function App() {
           session={stage.session}
           prefs={prefs}
           onPrefs={updatePrefs}
+          signedIn={!!account}
           onEject={() => setStage({ name: "pick" })}
         />
       );

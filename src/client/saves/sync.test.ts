@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CloudSaveMeta } from "../../shared/api";
 import type { LocalGameSave } from "./localSaves";
-import { decideLaunch, hasUnsyncedChanges, nextPushDelay, resolvePushConflict, retryDelay } from "./sync";
+import { decideLaunch, hasUnsyncedChanges, matchCloud, nextPushDelay, resolvePushConflict, retryDelay } from "./sync";
 
 const H = (c: string) => c.repeat(64);
 
@@ -25,6 +25,30 @@ const cloud = (over: Partial<CloudSaveMeta> = {}): CloudSaveMeta => ({
   createdAt: 500,
   updatedAt: 1000,
   ...over,
+});
+
+describe("clock base", () => {
+  it("counts a clock base the cloud doesn't have as unsynced", () => {
+    expect(hasUnsyncedChanges(local())).toBe(false);
+    expect(hasUnsyncedChanges(local({ rtcBase: 5 }))).toBe(true);
+    expect(hasUnsyncedChanges(local({ rtcBase: 5, cloud: { revision: 1, sramHash: H("a"), rtcBase: 5 } }))).toBe(false);
+    // The cloud kept another device's base; that's settled, not a reason to re-upload.
+    expect(hasUnsyncedChanges(local({ rtcBase: 5, cloud: { revision: 1, sramHash: H("a"), rtcBase: 7 } }))).toBe(false);
+  });
+
+  it("takes the cloud's clock base when both hold the same bytes", () => {
+    expect(matchCloud(local({ rtcBase: 5 }), cloud({ revision: 2, rtcBase: 7 }))).toMatchObject({
+      rtcBase: 7,
+      cloud: { revision: 2, sramHash: H("a"), rtcBase: 7 },
+    });
+  });
+
+  it("keeps this device's clock base when the cloud has none", () => {
+    const matched = matchCloud(local({ rtcBase: 5 }), cloud({ revision: 2 }));
+    expect(matched.rtcBase).toBe(5);
+    expect(matched.cloud).toEqual({ revision: 2, sramHash: H("a") });
+    expect(hasUnsyncedChanges(matched)).toBe(true);
+  });
 });
 
 describe("decideLaunch", () => {

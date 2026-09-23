@@ -31,6 +31,18 @@ export interface GameBoyEmulator {
    * Returns an unsubscribe function.
    */
   onSramWrite(listener: () => void): () => void;
+  /**
+   * Set the cartridge's real-time clock (Pokémon Gold/Silver/Crystal) as if its
+   * battery went in at `baseMs`, so it reads the real time passed since then.
+   * Applied at once if the game hasn't started since power-on (call after
+   * loadRom(), before start()); otherwise at the next reset(). Survives reset(),
+   * like the battery. No-op for cartridges without a clock.
+   *
+   * Only catches up with real time at power-on: while running, the clock
+   * advances with emulated time, so it stops while paused or in a background
+   * tab and falls behind until the next boot or reset().
+   */
+  setClock(baseMs: number): void;
   /** Deliver any pending onSramWrite notification now (e.g. before the page unloads). */
   flushSramWrites(): void;
 

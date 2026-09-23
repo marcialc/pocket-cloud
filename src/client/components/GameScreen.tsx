@@ -23,6 +23,8 @@ type Props = {
   session: Session;
   prefs: Preferences;
   onPrefs: (patch: Partial<Preferences>) => void;
+  /** Signed in with an email account (controls are saved to it). */
+  signedIn: boolean;
   onEject: () => void;
 };
 
@@ -32,7 +34,7 @@ const DIM_AFTER_MS = 2500;
 // iPhone Safari can't make a page element fullscreen, so the button is hidden there.
 const CAN_FULLSCREEN = document.fullscreenEnabled === true;
 
-export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
+export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -66,7 +68,10 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
           console.warn("Ignoring incompatible save", err);
         }
       }
-      saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync);
+      // A save without a clock base (new game, or made before the clock was emulated) starts its clock now.
+      const rtcBase = session.save?.rtcBase ?? Date.now();
+      emu.setClock(rtcBase);
+      saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase);
       saveSync.subscribe(setStatus);
       setStatus(saveSync.getStatus());
       if (session.push) saveSync.requestPush(session.push.force);
@@ -228,6 +233,7 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
     const sram = await sync.takeCloud();
     if (sram) {
       emulator.loadSram(sram);
+      emulator.setClock(sync.getRtcBase());
       emulator.reset();
     }
   };
@@ -446,7 +452,7 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
       )}
 
       {panel === "controls" && (
-        <ControlsPanel bindings={prefs.keyBindings} onChange={(keyBindings) => onPrefs({ keyBindings })} onClose={() => setPanel(null)} />
+        <ControlsPanel bindings={prefs.keyBindings} signedIn={signedIn} onChange={(keyBindings) => onPrefs({ keyBindings })} onClose={() => setPanel(null)} />
       )}
 
       {panel === "account" && (

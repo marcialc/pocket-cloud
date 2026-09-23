@@ -14,6 +14,8 @@ import { SidePanel } from "./SidePanel";
 
 type Props = {
   bindings: KeyBindings;
+  /** Signed in: changes are saved to the account, not just this device. */
+  signedIn: boolean;
   onChange: (bindings: KeyBindings) => void;
   onClose: () => void;
 };
@@ -36,7 +38,7 @@ const DIAGRAM: Record<GameBoyButton, { x: number; y: number; w: number; h: numbe
 type Notice = { tone: "warn" | "info"; text: string };
 
 /** Remap keyboard keys. Pick a button (diagram or list), press a key; Esc cancels. */
-export function ControlsPanel({ bindings, onChange, onClose }: Props) {
+export function ControlsPanel({ bindings, signedIn, onChange, onClose }: Props) {
   const [listening, setListening] = useState<GameBoyButton | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   // The keyup of the key just bound must not "click" the focused button (Space/Enter).
@@ -132,7 +134,9 @@ export function ControlsPanel({ bindings, onChange, onClose }: Props) {
         </>
       }
     >
-      <p className="muted">Pick a button on the handheld or in the list, then press the key you want for it. Saved on this device.</p>
+      <p className="muted">Pick a button on the handheld or in the list, then press the key you want for it.{" "}
+        {signedIn ? "Saved to your account." : "Saved on this device."}
+      </p>
 
       <div className="pad-diagram" aria-label="Handheld buttons" role="group">
         <span className="pad-well" aria-hidden />
