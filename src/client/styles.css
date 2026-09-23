@@ -717,6 +717,8 @@ kbd.empty { color: var(--ink-2); }
     gap: 8px; align-items: stretch; color: var(--ink);
     padding: max(10px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     position: relative; overflow: hidden; touch-action: manipulation;
+    /* A long press on a control mustn't grab the nearby text. */
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     background-color: var(--shell);
     background-image:
       radial-gradient(rgba(70, 60, 50, 0.08) 0.6px, transparent 0.9px),

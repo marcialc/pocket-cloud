@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { GameBoyButton, GameBoyEmulator } from "../emulator/GameBoyEmulator";
 
 type Props = { emulator: GameBoyEmulator | null; haptics: boolean };
@@ -17,6 +17,18 @@ function buzz(on: boolean) {
 export function TouchControls({ emulator, haptics }: Props) {
   const held = useRef(new Set<Direction>());
   const [dirs, setDirs] = useState<Set<Direction>>(new Set());
+  const root = useRef<HTMLDivElement>(null);
+
+  // iOS Safari still starts a text selection (and its loupe) on a long press
+  // even with user-select: none; only cancelling touchstart stops it. React
+  // attaches touch listeners as passive, so this needs a native listener.
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const stop = (e: TouchEvent) => e.preventDefault();
+    el.addEventListener("touchstart", stop, { passive: false });
+    return () => el.removeEventListener("touchstart", stop);
+  }, []);
 
   const setDirections = (next: Set<Direction>) => {
     if (!emulator) return;
@@ -49,7 +61,7 @@ export function TouchControls({ emulator, haptics }: Props) {
   const releaseDpad = () => setDirections(new Set());
 
   return (
-    <div className="touch-controls" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={root} className="touch-controls" onContextMenu={(e) => e.preventDefault()}>
       <div
         className="dpad"
         onPointerDown={onDpad}
