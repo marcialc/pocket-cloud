@@ -17,3 +17,6 @@ coverage/
 *.sgb
 *.sav
 *.srm
+
+# Local planning notes. Never commit.
+ideas/
