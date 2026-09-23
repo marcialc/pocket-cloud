@@ -12,6 +12,7 @@ import {
   type MyProfile,
 } from "../../shared/social";
 import { displayName } from "../emulator/rom";
+import { listRoms } from "../saves/localSaves";
 import {
   addFriend,
   fetchFriends,
@@ -43,6 +44,14 @@ export function FriendsPanel({ current, onClose }: Props) {
   const [friends, setFriends] = useState<FriendsResponse | null>(null);
   const [games, setGames] = useState<Load<GameLeaderboards[]>>({ state: "loading" });
   const [announce, setAnnounce] = useState("");
+  // Names the player gave games in this browser's library, by ROM hash (the boards carry the cartridge title).
+  const [names, setNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    listRoms().then(
+      (roms) => setNames(Object.fromEntries(roms.flatMap((r) => (r.customName ? [[r.romHash, r.customName]] : [])))),
+      () => {},
+    );
+  }, []);
 
   const loadProfile = useCallback(() => {
     setProfile({ state: "loading" });
@@ -104,7 +113,7 @@ export function FriendsPanel({ current, onClose }: Props) {
               }}
             />
           )}
-          <Leaderboards games={games} currentHash={current?.romHash} onRetry={refresh} />
+          <Leaderboards games={games} names={names} currentHash={current?.romHash} onRetry={refresh} />
         </>
       )}
       <p className="sr-only" aria-live="polite">
@@ -475,8 +484,9 @@ function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChang
   );
 }
 
-function Leaderboards({ games, currentHash, onRetry }: {
+function Leaderboards({ games, names, currentHash, onRetry }: {
   games: Load<GameLeaderboards[]>;
+  names: Record<string, string>;
   currentHash: string | undefined;
   onRetry: () => void;
 }) {
@@ -506,19 +516,20 @@ function Leaderboards({ games, currentHash, onRetry }: {
           game file.
         </p>
       )}
-      {current && <GameCard game={current} current />}
+      {current && <GameCard game={current} name={names[current.romHash]} current />}
       {others.map((g) => (
-        <GameCard key={g.romHash} game={g} />
+        <GameCard key={g.romHash} game={g} name={names[g.romHash]} />
       ))}
     </section>
   );
 }
 
-function GameCard({ game, current = false }: { game: GameLeaderboards; current?: boolean }) {
+function GameCard({ game, name, current = false }: { game: GameLeaderboards; name?: string | undefined; current?: boolean }) {
+  const title = name ?? displayName(game);
   return (
-    <article className="card stack-sm board-card" aria-label={`${displayName(game)} leaderboard`}>
+    <article className="card stack-sm board-card" aria-label={`${title} leaderboard`}>
       <div className="row">
-        <strong className="grow">{displayName(game)}</strong>
+        <strong className="grow">{title}</strong>
         <small className="fine">{current ? "Playing now" : game.players === 1 ? "Just one of you so far" : `${game.players} players`}</small>
       </div>
       {game.boards.map((b) => (
