@@ -12,6 +12,7 @@ import {
   type PutSettingsRequest,
   type SettingsResponse,
 } from "../shared/api";
+import { isShelf } from "../shared/shelf";
 import { handleAuth } from "./auth/routes";
 import { clearSessionCookie } from "./auth/session";
 import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
@@ -34,7 +35,7 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   DELETE /api/saves/:romHash     delete one save
  *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
  *   GET    /api/settings           account-wide settings (email sign-in only)
- *   PUT    /api/settings           replace them
+ *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *
@@ -152,13 +153,17 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 }
 
 const KEY_BINDINGS = "key_bindings";
-const MAX_SETTINGS_BYTES = 4096;
+const SHELF = "shelf";
+const MAX_SETTINGS_BYTES = 64 * 1024;
 
 async function handleSettings(request: Request, stub: DurableObjectStub<PlayerSaveDO>): Promise<Response> {
   switch (request.method) {
     case "GET": {
-      const stored = await stub.getSetting(KEY_BINDINGS);
-      return json({ keyBindings: stored ? JSON.parse(stored) : null } satisfies SettingsResponse);
+      const [keyBindings, shelf] = await Promise.all([stub.getSetting(KEY_BINDINGS), stub.getSetting(SHELF)]);
+      return json({
+        keyBindings: keyBindings ? JSON.parse(keyBindings) : null,
+        shelf: shelf ? JSON.parse(shelf) : null,
+      } satisfies SettingsResponse);
     }
     case "PUT": {
       if (Number(request.headers.get("Content-Length") ?? 0) > MAX_SETTINGS_BYTES) return json({ error: "payload_too_large" }, 400);
@@ -168,10 +173,13 @@ async function handleSettings(request: Request, stub: DurableObjectStub<PlayerSa
       } catch {
         return json({ error: "invalid_json" }, 400);
       }
-      if (typeof body !== "object" || body === null || !isKeyBindings(body.keyBindings)) {
-        return json({ error: "invalid_key_bindings" }, 400);
+      if (typeof body !== "object" || body === null || !("keyBindings" in body || "shelf" in body)) {
+        return json({ error: "invalid_settings" }, 400);
       }
-      await stub.putSetting(KEY_BINDINGS, JSON.stringify(body.keyBindings));
+      if ("keyBindings" in body && !isKeyBindings(body.keyBindings)) return json({ error: "invalid_key_bindings" }, 400);
+      if ("shelf" in body && !isShelf(body.shelf)) return json({ error: "invalid_shelf" }, 400);
+      if (body.keyBindings) await stub.putSetting(KEY_BINDINGS, JSON.stringify(body.keyBindings));
+      if (body.shelf) await stub.putSetting(SHELF, JSON.stringify(body.shelf));
       return new Response(null, { status: 204 });
     }
     default:

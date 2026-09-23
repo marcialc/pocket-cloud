@@ -334,7 +334,7 @@ kbd.empty { color: var(--ink-2); }
 .recent-head h2 { font-size: 12px; color: var(--on-bg); }
 .shelf { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px; }
 .game-card {
-  display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px;
+  position: relative; display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px;
   border-radius: 6px 22px 14px 14px;
   box-shadow: inset 0 2px 0 var(--shell-hi), 0 4px 0 var(--shell-deep), 0 12px 22px rgba(0, 0, 0, 0.35);
   transition: transform 90ms steps(2);
@@ -352,8 +352,43 @@ kbd.empty { color: var(--ink-2); }
 .game-title { font-size: 10px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
 .game-file { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
 .game-when { display: flex; align-items: center; gap: 6px; margin-top: auto; font-size: 13px; color: var(--ink-2); }
-.game-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.game-card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .game-card-tools { display: flex; gap: 8px; }
+
+/* Favorite star, in the top corner of the cartridge beside the grip. */
+.fav-toggle {
+  position: absolute; top: 0; right: 6px; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 36px;
+  border: 0; border-radius: 10px; background: none; color: var(--shell-deep);
+}
+.game-card .cart-grip.small { padding-right: 34px; }
+.fav-toggle:hover { color: var(--ink-2); }
+.fav-toggle.on { color: #c98a1b; }
+.fav-toggle.on svg { fill: currentColor; }
+
+/* Search, favorites and groups above the shelf. */
+.shelf-tools { display: flex; flex-direction: column; gap: 12px; }
+.search-field { position: relative; display: block; max-width: 420px; }
+.search-field svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--ink-2); pointer-events: none; }
+.search-field .field { height: 44px; padding-left: 42px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 36px; max-width: 100%; padding: 6px 12px;
+  border: 2px solid #4a4254; border-radius: 999px; background: none;
+  font: 600 13px/1.2 var(--sans); color: var(--on-bg-2);
+}
+.chip:hover { border-color: var(--on-bg-2); color: var(--on-bg); }
+.chip[aria-pressed="true"] { border-color: var(--shell); background: var(--shell); color: var(--ink); }
+.chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-count { font-size: 12px; font-weight: 500; opacity: 0.75; }
+.chip.add { border-style: dashed; }
+.group-bar { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.shelf-none { padding: 8px 0; }
+.group-list { max-height: 40dvh; overflow-y: auto; }
+.new-group { display: flex; gap: 10px; }
+.new-group .field { height: 44px; }
+.new-group .btn { flex-shrink: 0; }
+
 .shelf-empty {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 24px 36px; padding: 32px;
   border: 2px dashed #4a4254; border-radius: 20px;

@@ -5,6 +5,8 @@
  * of battery RAM (Pokémon Red uses 32 KiB), so the overhead is negligible.
  */
 
+import type { Shelf } from "./shelf";
+
 /** Largest battery RAM any supported cartridge type exposes (MBC5: 128 KiB). */
 export const MAX_SRAM_BYTES = 128 * 1024;
 
@@ -99,12 +101,13 @@ export async function sha256Hex(data: ArrayBuffer | Uint8Array): Promise<string>
 }
 
 /**
- * Account-wide settings for a signed-in player. Only the keyboard controls for
- * now; `keyBindings` is null until the account has saved some.
+ * Account-wide settings for a signed-in player: the keyboard controls and how
+ * the game library is organized. Each is null until the account has saved it.
  */
-export type SettingsResponse = { keyBindings: Record<string, string[]> | null };
+export type SettingsResponse = { keyBindings: Record<string, string[]> | null; shelf: Shelf | null };
 
-export type PutSettingsRequest = { keyBindings: Record<string, string[]> };
+/** Sends one or both settings; the ones left out are kept. */
+export type PutSettingsRequest = { keyBindings?: Record<string, string[]>; shelf?: Shelf };
 
 /**
  * Structural check for stored key bindings (button -> KeyboardEvent.code list).

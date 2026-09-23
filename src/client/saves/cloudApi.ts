@@ -16,6 +16,9 @@ export type CloudSave = CloudSaveMeta & { sram: Uint8Array };
 
 export class CloudUnavailableError extends Error {}
 
+/** The server turned the settings down (400): sending the same ones again won't help. */
+export class SettingsRejectedError extends Error {}
+
 const TIMEOUT_MS = 8000;
 
 async function call(path: string, init: RequestInit = {}, timeoutMs = TIMEOUT_MS): Promise<Response> {
@@ -121,7 +124,7 @@ export async function deleteCloudRom(romHash: string): Promise<void> {
   if (!res.ok && res.status !== 404) throw await romError(res);
 }
 
-/** The signed-in account's settings (keyBindings null until it has saved some). */
+/** The signed-in account's settings (each null until it has saved it). */
 export async function fetchCloudSettings(): Promise<SettingsResponse> {
   const res = await call("/settings");
   if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
@@ -130,5 +133,6 @@ export async function fetchCloudSettings(): Promise<SettingsResponse> {
 
 export async function putCloudSettings(settings: PutSettingsRequest): Promise<void> {
   const res = await call("/settings", { method: "PUT", body: JSON.stringify(settings) });
+  if (res.status === 400) throw new SettingsRejectedError(`Settings rejected: ${(await res.json().catch(() => ({}))).error ?? "unknown"}`);
   if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
 }

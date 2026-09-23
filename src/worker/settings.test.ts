@@ -52,19 +52,19 @@ describe("account settings", () => {
 
   it("starts empty, then round-trips key bindings", async () => {
     const cookie = await signIn();
-    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null });
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null, shelf: null });
     expect((await putSettings(cookie, { keyBindings: CUSTOM })).status).toBe(204);
-    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: CUSTOM });
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: CUSTOM, shelf: null });
     const changed = { ...CUSTOM, a: ["Space"] };
     expect((await putSettings(cookie, { keyBindings: changed })).status).toBe(204);
-    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: changed });
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: changed, shelf: null });
   });
 
   it("keeps each account's settings separate", async () => {
     const a = await signIn();
     const b = await signIn();
     await putSettings(a, { keyBindings: CUSTOM });
-    expect(await (await getSettings(b)).json()).toEqual({ keyBindings: null });
+    expect(await (await getSettings(b)).json()).toEqual({ keyBindings: null, shelf: null });
   });
 
   it("rejects malformed bindings", async () => {
@@ -73,6 +73,24 @@ describe("account settings", () => {
       expect((await putSettings(cookie, { keyBindings })).status).toBe(400);
     }
     expect((await putSettings(cookie, CUSTOM)).status).toBe(400);
-    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null });
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null, shelf: null });
+  });
+
+  it("keeps the library shelf beside the controls, each saved on its own", async () => {
+    const cookie = await signIn();
+    const shelf = { favorites: ["a".repeat(64)], groups: [{ id: "g1", name: "RPGs", roms: ["b".repeat(64)] }] };
+    expect((await putSettings(cookie, { shelf })).status).toBe(204);
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null, shelf });
+    expect((await putSettings(cookie, { keyBindings: CUSTOM })).status).toBe(204);
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: CUSTOM, shelf });
+  });
+
+  it("rejects a malformed shelf without saving anything", async () => {
+    const cookie = await signIn();
+    for (const shelf of [null, [], { favorites: ["x"], groups: [] }, { favorites: [], groups: [{ id: "g1", name: "", roms: [] }] }]) {
+      expect((await putSettings(cookie, { shelf })).status).toBe(400);
+    }
+    expect((await putSettings(cookie, { keyBindings: CUSTOM, shelf: null })).status).toBe(400);
+    expect(await (await getSettings(cookie)).json()).toEqual({ keyBindings: null, shelf: null });
   });
 });

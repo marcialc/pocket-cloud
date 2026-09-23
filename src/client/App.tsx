@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ListRomsResponse } from "../shared/api";
+import { EMPTY_SHELF, forgetGame } from "../shared/shelf";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { FriendsPanel } from "./components/FriendsPanel";
@@ -15,6 +16,7 @@ import { fetchAccount, signOut } from "./saves/authApi";
 import { deleteCloudRom, downloadCloudRom, listCloudRoms } from "./saves/cloudApi";
 import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
+import { forgetUnsyncedShelf, pushShelf, syncShelf } from "./saves/shelfSync";
 import { clearInvite, takeInvite } from "./saves/invite";
 import {
   clearCloudSyncState,
@@ -150,7 +152,12 @@ export function App() {
     await signOut(everywhere);
     await clearCloudSyncState();
     resetBackUpState();
-    setPrefs(resetCloudRomsChoice());
+    // The favorites and groups (with names the player typed) stay in the account, not in this browser
+    // for whoever signs in next.
+    forgetUnsyncedShelf();
+    const next = { ...resetCloudRomsChoice(), shelf: EMPTY_SHELF };
+    savePreferences(next);
+    setPrefs(next);
     setAccount(null);
   }, []);
 
@@ -167,6 +174,8 @@ export function App() {
       storePrefs(patch);
       // Signed in: the controls follow the account to other browsers.
       if (patch.keyBindings && accountRef.current) void pushKeyBindings(accountRef.current, patch.keyBindings);
+      // ...and so do the library's favorites and groups.
+      if (patch.shelf && accountRef.current) void pushShelf(accountRef.current, patch.shelf);
     },
     [storePrefs],
   );
@@ -178,6 +187,19 @@ export function App() {
     syncKeyBindings(account, loadPreferences().keyBindings).then(
       (keyBindings) => !stale && keyBindings && storePrefs({ keyBindings }),
       (err) => console.warn("Could not load the controls from the account", err),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [account, storePrefs]);
+
+  // Signed in: use the account's favorites and groups (or give it this browser's if it has none yet).
+  useEffect(() => {
+    if (!account) return;
+    let stale = false;
+    syncShelf(account, loadPreferences().shelf).then(
+      (shelf) => !stale && shelf && storePrefs({ shelf }),
+      (err) => console.warn("Could not load the library groups from the account", err),
     );
     return () => {
       stale = true;
@@ -303,16 +325,32 @@ export function App() {
     async (romHash: string, alsoSave: boolean, alsoCloud: boolean) => {
       await deleteRom(romHash);
       if (alsoSave) await deleteLocalSave(romHash);
+      let removedFromAccount = false;
       if (alsoCloud) {
-        await deleteCloudRom(romHash).then(
-          () => forgetBackUp(romHash),
-          (err) => console.warn("Could not remove this ROM from the account", err),
+        removedFromAccount = await deleteCloudRom(romHash).then(
+          () => {
+            forgetBackUp(romHash);
+            return true;
+          },
+          (err) => {
+            console.warn("Could not remove this ROM from the account", err);
+            return false;
+          },
         );
         refreshCloudRoms();
       }
+      // Signed in, the game may still be in the account: only when its list says it isn't do we know it's gone.
+      const stillInAccount =
+        !removedFromAccount && !!accountRef.current && (cloudRoms === null || cloudRoms.some((r) => r.romHash === romHash));
+      // Gone from the library altogether: unfavorite it and take it out of its groups.
+      if (!stillInAccount) {
+        const { shelf } = loadPreferences();
+        const next = forgetGame(shelf, romHash);
+        if (next !== shelf) updatePrefs({ shelf: next });
+      }
       refreshLibrary();
     },
-    [refreshLibrary, refreshCloudRoms],
+    [refreshLibrary, refreshCloudRoms, cloudRoms, updatePrefs],
   );
 
   const renameStored = useCallback(

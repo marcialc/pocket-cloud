@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
+import {
+  MAX_GROUP_NAME,
+  MAX_GROUPS,
+  addGroup,
+  removeGroup,
+  renameGroup,
+  setGameGroups,
+  toggleFavorite,
+  type Shelf,
+  type ShelfGroup,
+} from "../../shared/shelf";
 import type { Preferences } from "../preferences";
 import { listCloudSaves } from "../saves/cloudApi";
 import { getLocalSave, requestPersistentStorage, storageUsage } from "../saves/localSaves";
@@ -43,6 +54,11 @@ const HUES = ["#d6384a", "#2a615c", "#c98a1b", "#6a5a8c", "#4f7a3a", "#a4506f"];
 
 type GameSync = { kind: BadgeKind; label: string } | null;
 
+const SHELF_FULL = "Your favorites and groups are full. Take some games out of them to add more.";
+
+/** Which games the shelf shows: all, favorites, or one group (by id). */
+type View = "all" | "favorites" | (string & {});
+
 export function RomPicker({
   busy,
   error,
@@ -70,6 +86,34 @@ export function RomPicker({
   const [renaming, setRenaming] = useState<LibraryEntry | null>(null);
   const [storage, setStorage] = useState<{ usage: number; persisted: boolean } | null>(null);
   const [syncByRom, setSyncByRom] = useState<Record<string, GameSync>>({});
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<View>("all");
+  const [grouping, setGrouping] = useState<LibraryEntry | null>(null);
+  const [groupName, setGroupName] = useState<{ group: ShelfGroup | null } | null>(null);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ShelfGroup | null>(null);
+
+  const shelf = prefs.shelf;
+  // A change the shelf had no room for comes back as the same shelf.
+  const [shelfFull, setShelfFull] = useState(false);
+  const setShelf = (next: Shelf) => {
+    setShelfFull(next === shelf);
+    if (next !== shelf) onPrefs({ shelf: next });
+  };
+  const favorites = new Set(shelf.favorites);
+  // A group deleted here or on another device falls back to showing everything.
+  const activeGroup = shelf.groups.find((g) => g.id === view) ?? null;
+  const current: View = view === "favorites" || activeGroup ? view : "all";
+  const countOf = (hashes: string[]) => library.filter((rom) => hashes.includes(rom.romHash)).length;
+  // Favorites first; otherwise the library's own order (most recently played first).
+  const ordered = [...library.filter((rom) => favorites.has(rom.romHash)), ...library.filter((rom) => !favorites.has(rom.romHash))];
+  const inView =
+    current === "all"
+      ? ordered
+      : ordered.filter((rom) => (activeGroup ? activeGroup.roms.includes(rom.romHash) : favorites.has(rom.romHash)));
+  const search = query.trim().toLowerCase();
+  const shown = search
+    ? inView.filter((rom) => rom.title.toLowerCase().includes(search) || rom.fileName.toLowerCase().includes(search))
+    : inView;
 
   useEffect(() => {
     storageUsage().then(setStorage, () => setStorage(null));
@@ -242,7 +286,7 @@ export function RomPicker({
 
       <section className="recent" aria-labelledby="recent-title">
         <div className="recent-head">
-          <h2 id="recent-title" className="px">RECENT GAMES</h2>
+          <h2 id="recent-title" className="px">LIBRARY</h2>
           {loadedLibrary && (
             <span className="dim">
               {backingUp
@@ -253,12 +297,87 @@ export function RomPicker({
             </span>
           )}
         </div>
-        {library.length ? (
+        {library.length > 0 && (
+          <div className="shelf-tools">
+            <label className="search-field">
+              <Icon name="search" size={18} />
+              <input
+                type="search"
+                className="field"
+                placeholder="Search your games"
+                aria-label="Search your games"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+            <div className="chips" role="group" aria-label="Show">
+              <Chip label="All" count={library.length} pressed={current === "all"} onClick={() => setView("all")} />
+              <Chip
+                icon="star"
+                label="Favorites"
+                count={countOf(shelf.favorites)}
+                pressed={current === "favorites"}
+                onClick={() => setView("favorites")}
+              />
+              {shelf.groups.map((g) => (
+                <Chip
+                  key={g.id}
+                  icon="folder"
+                  label={g.name}
+                  count={countOf(g.roms)}
+                  pressed={current === g.id}
+                  onClick={() => setView(g.id)}
+                />
+              ))}
+              {shelf.groups.length < MAX_GROUPS && (
+                <button type="button" className="chip add" onClick={() => setGroupName({ group: null })}>
+                  <Icon name="plus" size={14} /> New group
+                </button>
+              )}
+            </div>
+            {activeGroup && (
+              <div className="group-bar">
+                <button type="button" className="link on-dark" onClick={() => setGroupName({ group: activeGroup })}>
+                  Rename group
+                </button>
+                <button type="button" className="link on-dark" onClick={() => setConfirmDeleteGroup(activeGroup)}>
+                  Delete group
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {shelfFull && (
+          <p className="dim" role="alert">
+            {SHELF_FULL}
+          </p>
+        )}
+        {library.length > 0 && shown.length === 0 && (
+          <p className="shelf-none dim" role="status">
+            {search
+              ? `No games match “${query.trim()}”.`
+              : current === "favorites"
+                ? "No favorites yet. Tap the star on a game to pin it to the top."
+                : "No games in this group yet. Use the folder button on a game to add it."}
+          </p>
+        )}
+        {shown.length ? (
           <ul className="shelf">
-            {library.map((rom) => {
+            {shown.map((rom) => {
               const sync = syncByRom[rom.romHash];
+              const favorite = favorites.has(rom.romHash);
               return (
                 <li key={rom.romHash} className="game-card plastic">
+                  <button
+                    type="button"
+                    className={`fav-toggle tip tip-below${favorite ? " on" : ""}`}
+                    data-tip={favorite ? "Remove from favorites" : "Add to favorites"}
+                    aria-label={`Favorite ${rom.title}`}
+                    aria-pressed={favorite}
+                    onClick={() => setShelf(toggleFavorite(shelf, rom.romHash))}
+                  >
+                    <Icon name="star" size={18} />
+                  </button>
                   <button
                     type="button"
                     className="game-card-play"
@@ -283,6 +402,15 @@ export function RomPicker({
                   <div className="game-card-foot">
                     {sync ? <Badge kind={sync.kind} label={sync.label} /> : <span className="dim-ink">No save yet</span>}
                     <span className="game-card-tools">
+                      <button
+                        type="button"
+                        className="ibtn small tip"
+                        data-tip="Groups"
+                        aria-label={`Groups for ${rom.title}`}
+                        onClick={() => setGrouping(rom)}
+                      >
+                        <Icon name="folder" size={16} />
+                      </button>
                       {rom.onDevice && (
                         <button
                           type="button"
@@ -309,7 +437,7 @@ export function RomPicker({
               );
             })}
           </ul>
-        ) : loadedLibrary ? (
+        ) : loadedLibrary && !library.length ? (
           <div className="shelf-empty">
             <EmptyShelfArt />
             <div className="stack-sm">
@@ -366,7 +494,81 @@ export function RomPicker({
           }}
         />
       )}
+
+      {grouping && (
+        <GroupsDialog
+          rom={grouping}
+          shelf={shelf}
+          onCancel={() => setGrouping(null)}
+          onSave={(next) => {
+            setShelf(next);
+            setGrouping(null);
+          }}
+        />
+      )}
+
+      {groupName && (
+        <GroupNameDialog
+          group={groupName.group}
+          onCancel={() => setGroupName(null)}
+          onSave={(name) => {
+            if (groupName.group) {
+              setShelf(renameGroup(shelf, groupName.group.id, name));
+            } else {
+              const id = crypto.randomUUID();
+              setShelf(addGroup(shelf, name, id));
+              setView(id);
+            }
+            setGroupName(null);
+          }}
+        />
+      )}
+
+      {confirmDeleteGroup && (
+        <Modal labelledBy="delete-group-title" onClose={() => setConfirmDeleteGroup(null)}>
+          <h2 id="delete-group-title">Delete {confirmDeleteGroup.name}?</h2>
+          <p className="muted">Only the group goes. The games in it stay in your library.</p>
+          <div className="dialog-foot">
+            <button type="button" className="btn small" onClick={() => setConfirmDeleteGroup(null)} autoFocus>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn small primary"
+              onClick={() => {
+                setShelf(removeGroup(shelf, confirmDeleteGroup.id));
+                setView("all");
+                setConfirmDeleteGroup(null);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </Modal>
+      )}
     </main>
+  );
+}
+
+function Chip({
+  label,
+  count,
+  pressed,
+  onClick,
+  icon,
+}: {
+  label: string;
+  count: number;
+  pressed: boolean;
+  onClick: () => void;
+  icon?: "star" | "folder";
+}) {
+  return (
+    <button type="button" className="chip" aria-pressed={pressed} onClick={onClick}>
+      {icon && <Icon name={icon} size={14} />}
+      <span className="chip-label">{label}</span>
+      <span className="chip-count">{count}</span>
+    </button>
   );
 }
 
@@ -458,6 +660,148 @@ function RenameDialog({
           </button>
           <button type="submit" className="btn small primary">
             Save
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Picks which groups a game is in, and can make a new group on the spot. */
+function GroupsDialog({
+  rom,
+  shelf,
+  onSave,
+  onCancel,
+}: {
+  rom: LibraryEntry;
+  shelf: Shelf;
+  onSave: (shelf: Shelf) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(shelf);
+  const [picked, setPicked] = useState(() => new Set(shelf.groups.filter((g) => g.roms.includes(rom.romHash)).map((g) => g.id)));
+  const [newName, setNewName] = useState("");
+  const [full, setFull] = useState(false);
+  const addNew = () => {
+    const id = crypto.randomUUID();
+    const next = addGroup(draft, newName, id);
+    setFull(next === draft);
+    if (next === draft) return;
+    setDraft(next);
+    setPicked(new Set([...picked, id]));
+    setNewName("");
+  };
+  const toggle = (id: string, on: boolean) => {
+    const next = new Set(picked);
+    if (on) next.add(id);
+    else next.delete(id);
+    setPicked(next);
+  };
+  return (
+    <Modal labelledBy="groups-title" onClose={onCancel}>
+      <h2 id="groups-title">Groups for {rom.title}</h2>
+      {draft.groups.length ? (
+        <div className="stack-sm group-list">
+          {draft.groups.map((g) => (
+            <label key={g.id} className="check-row">
+              <input className="check" type="checkbox" checked={picked.has(g.id)} onChange={(e) => toggle(g.id, e.target.checked)} />
+              <span>
+                <strong>{g.name}</strong>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No groups yet. Make one below, like “RPGs” or “Playing now”.</p>
+      )}
+      {draft.groups.length < MAX_GROUPS && (
+        <div className="new-group">
+          <input
+            className="field"
+            value={newName}
+            maxLength={MAX_GROUP_NAME}
+            placeholder="New group name"
+            aria-label="New group name"
+            autoFocus={!draft.groups.length}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addNew();
+              }
+            }}
+          />
+          <button type="button" className="btn small" disabled={!newName.trim()} onClick={addNew}>
+            <Icon name="plus" size={14} /> Add
+          </button>
+        </div>
+      )}
+      {full && (
+        <p className="error" role="alert">
+          {SHELF_FULL}
+        </p>
+      )}
+      <div className="dialog-foot">
+        <button type="button" className="btn small" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn small primary"
+          onClick={() => {
+            const next = setGameGroups(draft, rom.romHash, picked);
+            const changed = draft.groups.some((g) => g.roms.includes(rom.romHash) !== picked.has(g.id));
+            if (changed && next === draft) setFull(true);
+            else onSave(next);
+          }}
+        >
+          Done
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Names a new group, or renames one (`group`). */
+function GroupNameDialog({
+  group,
+  onSave,
+  onCancel,
+}: {
+  group: ShelfGroup | null;
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(group?.name ?? "");
+  return (
+    <Modal labelledBy="group-name-title" onClose={onCancel}>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) onSave(name);
+        }}
+      >
+        <h2 id="group-name-title">{group ? "Rename group" : "New group"}</h2>
+        <p className="muted">
+          {group ? "Games in the group stay in it." : "Sort games into groups, like “RPGs” or “Playing now”. A game can be in more than one."}
+        </p>
+        <input
+          className="field"
+          value={name}
+          maxLength={MAX_GROUP_NAME}
+          autoFocus
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setName(e.target.value)}
+          aria-label="Group name"
+        />
+        <div className="dialog-foot">
+          <button type="button" className="btn small" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn small primary" disabled={!name.trim()}>
+            {group ? "Save" : "Create"}
           </button>
         </div>
       </form>

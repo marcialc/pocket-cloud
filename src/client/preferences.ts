@@ -1,3 +1,4 @@
+import { EMPTY_SHELF, sanitizeShelf, type Shelf } from "../shared/shelf";
 import { DEFAULT_KEY_BINDINGS, sanitizeBindings, type KeyBindings } from "./emulator/keyBindings";
 
 /** Small per-device UI preferences (localStorage). */
@@ -20,6 +21,8 @@ export type Preferences = {
   reduceMotion: boolean;
   /** Vibrate on touch-gamepad presses (phones that support it). */
   haptics: boolean;
+  /** Favorite games and groups in the library (follows the account when signed in). */
+  shelf: Shelf;
 };
 
 const KEY = "pocket-cloud.prefs";
@@ -34,12 +37,18 @@ const DEFAULTS: Preferences = {
   uiSounds: false,
   reduceMotion: false,
   haptics: true,
+  shelf: EMPTY_SHELF,
 };
 
 export function loadPreferences(): Preferences {
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return { ...DEFAULTS, ...stored, keyBindings: sanitizeBindings(stored.keyBindings ?? DEFAULT_KEY_BINDINGS) };
+    return {
+      ...DEFAULTS,
+      ...stored,
+      keyBindings: sanitizeBindings(stored.keyBindings ?? DEFAULT_KEY_BINDINGS),
+      shelf: sanitizeShelf(stored.shelf ?? EMPTY_SHELF),
+    };
   } catch {
     return DEFAULTS;
   }
