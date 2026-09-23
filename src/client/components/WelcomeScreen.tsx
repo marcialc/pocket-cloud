@@ -43,7 +43,7 @@ export function WelcomeScreen({ onSignedIn, onSkip }: Props) {
           </div>
         </div>
         <p className="cart-foot">
-          <Icon name="lock" size={16} /> The ROM never leaves your device.
+          <Icon name="lock" size={16} /> ROM files stay on this device unless you choose to keep them in your account.
         </p>
       </section>
     </main>

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
 import type { Preferences } from "../preferences";
 import { listCloudSaves } from "../saves/cloudApi";
-import { getLocalSave, requestPersistentStorage, storageUsage, type RomSummary } from "../saves/localSaves";
+import { getLocalSave, requestPersistentStorage, storageUsage } from "../saves/localSaves";
+import type { LibraryEntry } from "../saves/romLibrary";
 import { decideLaunch } from "../saves/sync";
 import { formatWhen } from "./format";
 import { Brand, Icon, Ridges } from "./icons";
@@ -13,12 +14,19 @@ type Props = {
   busy: string | null;
   error?: string | undefined;
   /** null while the library is still loading. */
-  library: RomSummary[] | null;
+  library: LibraryEntry[] | null;
+  /** Signed in with cloud backup on: the account's games are listed too. */
+  cloudLibrary: boolean;
+  /** Ask once whether to keep games in the account; `missing` = games here that would be uploaded. */
+  offerKeepGames: { missing: number } | null;
+  onKeepGames: (on: boolean) => void;
+  /** Games in this browser are being uploaded to the account. */
+  backingUp: boolean;
   prefs: Preferences;
   onPrefs: (patch: Partial<Preferences>) => void;
   onOpen: (data: ArrayBuffer, fileName: string) => void;
   onPlayStored: (romHash: string) => void;
-  onRemoveStored: (romHash: string, alsoSave: boolean) => void;
+  onRemoveStored: (romHash: string, alsoSave: boolean, alsoCloud: boolean) => void;
   onRenameStored: (romHash: string, name: string) => void;
   /** Signed-in email, or null. */
   account: string | null;
@@ -37,6 +45,10 @@ export function RomPicker({
   busy,
   error,
   library: loadedLibrary,
+  cloudLibrary,
+  offerKeepGames,
+  onKeepGames,
+  backingUp,
   prefs,
   onPrefs,
   onOpen,
@@ -48,10 +60,11 @@ export function RomPicker({
   onControls,
 }: Props) {
   const library = loadedLibrary ?? [];
+  const keepingGames = cloudLibrary && prefs.cloudRoms === "on";
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState<RomSummary | null>(null);
-  const [renaming, setRenaming] = useState<RomSummary | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<LibraryEntry | null>(null);
+  const [renaming, setRenaming] = useState<LibraryEntry | null>(null);
   const [storage, setStorage] = useState<{ usage: number; persisted: boolean } | null>(null);
   const [syncByRom, setSyncByRom] = useState<Record<string, GameSync>>({});
 
@@ -168,11 +181,18 @@ export function RomPicker({
             />
             <span>
               <strong>Remember this game</strong>
-              <small>Keeps a copy in this browser only, so it’s one click next time. Never uploaded.</small>
+              <small>
+                {keepingGames
+                  ? "Keeps a copy in this browser, so it’s one click next time."
+                  : "Keeps a copy in this browser only, so it’s one click next time. Never uploaded."}
+              </small>
             </span>
           </label>
           <p className="lock-line">
-            <Icon name="lock" size={15} /> The ROM never leaves your device.
+            <Icon name="lock" size={15} />{" "}
+            {keepingGames
+              ? "Games you open are kept privately in your account, on any device you sign in to."
+              : "The ROM never leaves your device."}
           </p>
         </div>
         <input
@@ -187,11 +207,40 @@ export function RomPicker({
         />
       </section>
 
+      {offerKeepGames && (
+        <section className="notice info stack-sm" aria-labelledby="keep-games-title">
+          <Icon name="upload" size={18} />
+          <div className="stack-sm">
+            <strong id="keep-games-title">Keep your games in your account?</strong>
+            <span>
+              Your ROM files are uploaded privately to your account, so they’re ready on any device you sign in to.
+              {offerKeepGames.missing > 0 &&
+                ` ${offerKeepGames.missing} ${offerKeepGames.missing === 1 ? "game" : "games"} in this browser will be backed up now.`}{" "}
+              You can change this under Account.
+            </span>
+            <div className="row">
+              <button type="button" className="btn small primary" onClick={() => onKeepGames(true)}>
+                Keep my games
+              </button>
+              <button type="button" className="btn small" onClick={() => onKeepGames(false)}>
+                Not now
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="recent" aria-labelledby="recent-title">
         <div className="recent-head">
           <h2 id="recent-title" className="px">RECENT GAMES</h2>
           {loadedLibrary && (
-            <span className="dim">{library.length ? `${library.length} in this browser` : "Nothing here yet"}</span>
+            <span className="dim">
+              {backingUp
+                ? "Backing up to your account…"
+                : library.length
+                  ? `${library.length} ${cloudLibrary ? "in your library" : "in this browser"}`
+                  : "Nothing here yet"}
+            </span>
           )}
         </div>
         {library.length ? (
@@ -205,7 +254,7 @@ export function RomPicker({
                     className="game-card-play"
                     disabled={!!busy}
                     onClick={() => onPlayStored(rom.romHash)}
-                    aria-label={`Play ${rom.title}, played ${formatWhen(rom.lastPlayedAt)}${sync ? `, ${sync.label.toLowerCase()}` : ""}`}
+                    aria-label={`Play ${rom.title}, ${rom.onDevice ? `played ${formatWhen(rom.lastPlayedAt)}` : "not played on this device"}${sync ? `, ${sync.label.toLowerCase()}` : ""}`}
                   >
                     <span className="cart-grip small">
                       <Ridges />
@@ -214,29 +263,32 @@ export function RomPicker({
                     <span className="game-label">
                       <span className="label-stripe" style={{ background: hueFor(rom.romHash) }} />
                       <span className="px game-title">{rom.title}</span>
-                      <span className="game-file">{rom.fileName}</span>
+                      <span className="game-file">{rom.onDevice ? rom.fileName : "In your account · downloads on play"}</span>
                       <span className="game-when">
-                        <Icon name="clock" size={14} /> Played {formatWhen(rom.lastPlayedAt)}
+                        <Icon name="clock" size={14} />{" "}
+                        {rom.onDevice ? `Played ${formatWhen(rom.lastPlayedAt)}` : "Not played on this device"}
                       </span>
                     </span>
                   </button>
                   <div className="game-card-foot">
                     {sync ? <Badge kind={sync.kind} label={sync.label} /> : <span className="dim-ink">No save yet</span>}
                     <span className="game-card-tools">
+                      {rom.onDevice && (
+                        <button
+                          type="button"
+                          className="ibtn small tip"
+                          data-tip="Rename"
+                          aria-label={`Rename ${rom.title}`}
+                          onClick={() => setRenaming(rom)}
+                        >
+                          <Icon name="pencil" size={16} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="ibtn small tip"
-                        data-tip="Rename"
-                        aria-label={`Rename ${rom.title}`}
-                        onClick={() => setRenaming(rom)}
-                      >
-                        <Icon name="pencil" size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        className="ibtn small tip"
-                        data-tip="Remove from this browser"
-                        aria-label={`Remove ${rom.title} from this browser`}
+                        data-tip={rom.onDevice ? "Remove from this browser" : "Remove from your account"}
+                        aria-label={`Remove ${rom.title} from ${rom.onDevice ? "this browser" : "your account"}`}
                         onClick={() => setConfirmRemove(rom)}
                       >
                         <Icon name="trash" size={16} />
@@ -253,8 +305,9 @@ export function RomPicker({
             <div className="stack-sm">
               <p className="px">YOUR SHELF IS EMPTY</p>
               <p className="dim">
-                Games you open show up here so you can jump back in. With “Remember this game” on, they stay in this
-                browser only.
+                {keepingGames
+                  ? "Games you open show up here so you can jump back in, on any device you sign in to."
+                  : "Games you open show up here so you can jump back in. With “Remember this game” on, they stay in this browser only."}
               </p>
             </div>
           </div>
@@ -286,8 +339,8 @@ export function RomPicker({
         <RemoveDialog
           rom={confirmRemove}
           onCancel={() => setConfirmRemove(null)}
-          onRemove={(alsoSave) => {
-            onRemoveStored(confirmRemove.romHash, alsoSave);
+          onRemove={(alsoSave, alsoCloud) => {
+            onRemoveStored(confirmRemove.romHash, alsoSave, alsoCloud);
             setConfirmRemove(null);
           }}
         />
@@ -316,15 +369,30 @@ function RemoveDialog({
   onRemove,
   onCancel,
 }: {
-  rom: RomSummary;
-  onRemove: (alsoSave: boolean) => void;
+  rom: LibraryEntry;
+  onRemove: (alsoSave: boolean, alsoCloud: boolean) => void;
   onCancel: () => void;
 }) {
   const [alsoSave, setAlsoSave] = useState(false);
+  // A game that's only in the account can only be removed from the account.
+  const [alsoCloud, setAlsoCloud] = useState(!rom.onDevice);
   return (
     <Modal labelledBy="remove-title" onClose={onCancel}>
       <h2 id="remove-title">Remove {rom.title}?</h2>
-      <p className="muted">The ROM file is deleted from this browser. You can add it again from your own copy at any time.</p>
+      <p className="muted">
+        {rom.onDevice
+          ? "The ROM file is deleted from this browser. You can add it again from your own copy at any time."
+          : "The ROM file is removed from your account, so your devices stop listing it. Browsers that still have their own copy keep it. You can add it again from your own copy at any time."}
+      </p>
+      {rom.onDevice && rom.inCloud && (
+        <label className="check-row">
+          <input className="check" type="checkbox" checked={alsoCloud} onChange={(e) => setAlsoCloud(e.target.checked)} />
+          <span>
+            <strong>Also remove it from your account</strong>
+            <small>Otherwise it stays in your library on your other devices. Browsers that have their own copy keep it either way.</small>
+          </span>
+        </label>
+      )}
       <label className="check-row">
         <input className="check" type="checkbox" checked={alsoSave} onChange={(e) => setAlsoSave(e.target.checked)} />
         <span>
@@ -336,7 +404,7 @@ function RemoveDialog({
         <button type="button" className="btn small" onClick={onCancel} autoFocus>
           Cancel
         </button>
-        <button type="button" className="btn small primary" onClick={() => onRemove(alsoSave)}>
+        <button type="button" className="btn small primary" onClick={() => onRemove(alsoSave, alsoCloud)}>
           Remove
         </button>
       </div>
@@ -349,7 +417,7 @@ function RenameDialog({
   onRename,
   onCancel,
 }: {
-  rom: RomSummary;
+  rom: LibraryEntry;
   onRename: (name: string) => void;
   onCancel: () => void;
 }) {

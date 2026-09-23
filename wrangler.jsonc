@@ -21,6 +21,9 @@
     { "tag": "v1", "new_sqlite_classes": ["PlayerSaveDO"] },
     { "tag": "v2", "new_sqlite_classes": ["AuthDO"] }
   ],
+  // Signed-in players' ROM library, one object per ROM: roms/<playerId>/<romHash>.
+  //   pnpm wrangler r2 bucket create pocket-cloud-roms   (once, before the first deploy)
+  "r2_buckets": [{ "binding": "ROMS", "bucket_name": "pocket-cloud-roms" }],
   // Sign-in codes are sent from login@pocketcloud.app (Cloudflare Email Service).
   "send_email": [{ "name": "EMAIL" }],
   // Per-IP limit on /api/auth/request and /verify (per-email limits live in AuthDO).

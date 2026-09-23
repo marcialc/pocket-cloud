@@ -3,6 +3,11 @@ import { DEFAULT_KEY_BINDINGS, sanitizeBindings, type KeyBindings } from "./emul
 /** Small per-device UI preferences (localStorage). */
 export type Preferences = {
   cloudSync: boolean;
+  /**
+   * Keep games (ROM files) in the signed-in account. "ask" until the player
+   * answers the one-time prompt; nothing is uploaded before they say yes.
+   */
+  cloudRoms: "ask" | "on" | "off";
   rememberRom: boolean;
   volume: number;
   muted: boolean;
@@ -20,6 +25,7 @@ export type Preferences = {
 const KEY = "pocket-cloud.prefs";
 const DEFAULTS: Preferences = {
   cloudSync: true,
+  cloudRoms: "ask",
   rememberRom: true,
   volume: 0.6,
   muted: false,
@@ -41,4 +47,15 @@ export function loadPreferences(): Preferences {
 
 export function savePreferences(prefs: Preferences): void {
   localStorage.setItem(KEY, JSON.stringify(prefs));
+}
+
+/**
+ * The answer to "Keep your games in your account?" belongs to whoever gave it,
+ * so it goes back to "ask" whenever the signed-in account changes. For code
+ * that reloads the page right after; React state uses the returned value.
+ */
+export function resetCloudRomsChoice(): Preferences {
+  const next = { ...loadPreferences(), cloudRoms: "ask" as const };
+  savePreferences(next);
+  return next;
 }

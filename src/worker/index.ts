@@ -13,6 +13,7 @@ import { handleAuth } from "./auth/routes";
 import { clearSessionCookie } from "./auth/session";
 import { isCrossSite, json, methodNotAllowed } from "./http";
 import { authenticate } from "./identity";
+import { handleRoms } from "./roms";
 
 export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
@@ -25,13 +26,15 @@ export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
  *   GET    /api/saves/:romHash     fetch one save (with SRAM)
  *   PUT    /api/saves/:romHash     upload SRAM (optimistic concurrency via baseRevision)
  *   DELETE /api/saves/:romHash     delete one save
+ *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *
  * Saves routes accept either an email session cookie or the anonymous player
  * key (`Authorization: Bearer <key>`); a key stops working once an account
  * has claimed its player.
  *
- * Only SRAM (battery save data) is ever accepted. ROM data is never sent here.
+ * The saves routes only accept SRAM (battery save data). ROM bytes arrive
+ * only on /api/roms, and only from a signed-in account.
  */
 export default {
   async fetch(request, env): Promise<Response> {
@@ -50,7 +53,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path === "/api/health") return json({ ok: true, time: Date.now() });
   if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
   if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
-  if (!path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  const roms = path === "/api/roms" || path.startsWith("/api/roms/");
+  if (!roms && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
 
   const identity = await authenticate(request, env);
   if ("error" in identity) {
@@ -62,6 +66,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return identity.access.kind === "key"
       ? json({ error: "key_retired" }, 401)
       : json({ error: "session_invalid" }, 401, { "Set-Cookie": clearSessionCookie(request.url) });
+  }
+  if (roms) {
+    // ROMs are stored only for accounts, never for an anonymous key.
+    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
+    return handleRoms(request, env, url, identity.playerId);
   }
 
   if (path === "/api/saves") {

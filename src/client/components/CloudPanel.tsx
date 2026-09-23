@@ -105,6 +105,9 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
               <Icon name="check" size={16} /> Pick up where you left off on another device
             </li>
             <li>
+              <Icon name="check" size={16} /> Your games follow you too, no re-picking files
+            </li>
+            <li>
               <Icon name="check" size={16} /> Download a backup any time
             </li>
           </ul>
@@ -203,10 +206,22 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
         <div className="card settings">
           <Setting
             title="Cloud backup"
-            desc="Save files back up a few seconds after the game saves. Only save data is uploaded, never the ROM."
+            desc={
+              account
+                ? "Save files back up a few seconds after the game saves."
+                : "Save files back up a few seconds after the game saves. Only save data is uploaded, never the ROM."
+            }
             on={prefs.cloudSync}
             onChange={(cloudSync) => onPrefs({ cloudSync })}
           />
+          {account && prefs.cloudSync && (
+            <Setting
+              title="Keep games in my account"
+              desc="Upload the ROM files you open, privately, so they’re ready on any device you sign in to."
+              on={prefs.cloudRoms === "on"}
+              onChange={(on) => onPrefs({ cloudRoms: on ? "on" : "off" })}
+            />
+          )}
           <Setting
             title="UI sounds"
             desc="Soft clicks when you press buttons in menus. Never during play."
@@ -221,7 +236,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
           />
           <Setting
             title="Remember games"
-            desc="Keep opened games in this browser for one-click play. Never uploaded."
+            desc="Keep opened games in this browser for one-click play."
             on={prefs.rememberRom}
             onChange={(rememberRom) => onPrefs({ rememberRom })}
           />
@@ -229,7 +244,10 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
       </section>
 
       <p className="lock-line">
-        <Icon name="lock" size={15} /> Only save files sync. The ROM never leaves your device.
+        <Icon name="lock" size={15} />{" "}
+        {account && prefs.cloudSync && prefs.cloudRoms === "on"
+          ? "Your games and saves are private to your account."
+          : "Only save files sync. The ROM never leaves your device."}
       </p>
       <p className="sr-only" aria-live="polite">
         {announce}

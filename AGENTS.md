@@ -13,3 +13,6 @@ production.** Treat a push to `main` as a deploy.
   production; without it `/api/auth/*` answers 503. Local dev reads it from
   `.dev.vars` (copy `.dev.vars.example`), and codes print to the dev-server
   terminal instead of being emailed.
+- The cloud ROM library needs the `pocket-cloud-roms` R2 bucket
+  (`pnpm wrangler r2 bucket create pocket-cloud-roms`, once); deploys fail
+  while it doesn't exist. Local dev and tests simulate it.

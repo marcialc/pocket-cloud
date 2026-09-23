@@ -6,10 +6,14 @@ sync to Cloudflare Durable Objects.
 
 - The emulator ([binjgb](https://github.com/binji/binjgb), WebAssembly) runs
   entirely in your browser.
-- **The ROM never leaves your device.** It is read with the File API, hashed
-  locally, and (optionally) kept in your browser's IndexedDB as a local game
-  library, so a game only has to be picked once. Only battery-save data
-  (SRAM, typically 8–32 KiB) is ever uploaded.
+- **Signed out, the ROM never leaves your device.** It is read with the File
+  API, hashed locally, and (optionally) kept in your browser's IndexedDB as a
+  local game library, so a game only has to be picked once. Only battery-save
+  data (SRAM, typically 8–32 KiB) is uploaded.
+- **Signed in with email**, you can choose to keep your games privately in your
+  account (R2), so they show up on every device you sign in to and download on
+  first play. Nothing is uploaded until you say yes. See
+  [Cloud ROM library](#cloud-rom-library).
 - No ROMs, and no game assets, are included in this repository or its deploys.
 
 ```text
@@ -20,6 +24,7 @@ Browser ── picks local .gb ─► binjgb (WASM) ─► <canvas> + Web Audio
    │                              │ debounced upload
    ▼                              ▼
 Cloudflare Worker  /api/*  ─►  PlayerSaveDO (SQLite, one per player)
+   │                  /api/roms ─►  R2 roms/<playerId>/<romHash> (signed-in only)
    └── static assets (React app, binjgb.js/.wasm)
 ```
 
@@ -145,6 +150,45 @@ bytes are fetched when a game is launched. Removing a game deletes the ROM
 how much storage the site uses and offers "Keep permanently", which calls
 `navigator.storage.persist()` so the browser won't evict ROMs and saves under
 disk pressure.
+
+### Cloud ROM library
+
+Signed-in players can keep their ROMs in the `pocket-cloud-roms` R2 bucket
+(binding `ROMS`), one object per game at `roms/<playerId>/<romHash>` with the
+file name and header title as custom metadata. The anonymous player key can't
+use it (`403 sign_in_required`).
+
+- **Opt-in.** The `cloudRoms` preference starts at `"ask"`: once signed in
+  (with cloud backup on), the start screen asks "Keep your games in your
+  account?" and says how many games would be uploaded. Nothing is uploaded
+  before the answer; Account → "Keep games in my account" changes it later.
+  The answer resets to `"ask"` on every sign-in and sign-out, so on a shared
+  browser each account decides for itself.
+- **When on**, the games already in the browser are backed up once per
+  sign-in (sign-out stops the loop), and opening a game uploads it in the
+  background, but only after the account's list has loaded and shows it
+  missing.
+- **The account's games show on every device.** The start screen merges both
+  lists. A game that's only in the account shows "In your account · downloads
+  on play" and "Not played on this device"; playing it downloads the ROM (and
+  stores it locally if "Remember this game" is on).
+- **Removal sticks.** "Also remove it from your account" deletes the object and
+  leaves an empty marker at `removed/<playerId>/<romHash>`. Background uploads
+  of that game (another browser's backup, opening it from a library) get
+  `409 removed`; it only goes back when the player picks the file again
+  (`picked=1`), which clears the marker. Browsers keep their own local copies.
+- **Limits.** The Worker checks the bytes hash to the `romHash` in the URL,
+  reads at most 8 MiB whether or not `Content-Length` is sent, needs 32 KiB
+  or more, and an account holds at most 100 games (`403 library_full`,
+  re-checked after the write so parallel uploads can't overshoot).
+- Custom names (Rename) and "last played" stay per device.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/roms` | `{ roms: [{ romHash, fileName, title, size, uploadedAt }], removed: [romHash] }` |
+| GET | `/api/roms/:romHash` | ROM bytes |
+| PUT | `/api/roms/:romHash?name=&title=[&picked=1]` | raw bytes (`application/octet-stream`); 200 (also if already stored), 409 `removed` |
+| DELETE | `/api/roms/:romHash` | 204 |
 
 ## SRAM persistence
 
@@ -275,6 +319,7 @@ Security model:
 
 ```bash
 pnpm wrangler login    # once
+pnpm wrangler r2 bucket create pocket-cloud-roms   # once, for the cloud ROM library
 pnpm run deploy        # builds and deploys Worker + assets + DO migration
 ```
 
@@ -333,7 +378,7 @@ still persist locally and upload when back online).
   core in a C global).
 - Anonymous players: the player key is a bearer secret with no recovery if
   lost. Sign in with email to avoid that.
-- Only the sign-in endpoints are rate limited, not the saves API.
+- Only the sign-in endpoints are rate limited, not the saves or ROM APIs.
 - Audio uses scheduled `AudioBufferSource`s (like upstream), not an
   AudioWorklet; very slow devices may crackle.
 - Some games write SRAM over several frames; a capture can occasionally land

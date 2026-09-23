@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ListRomsResponse } from "../shared/api";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { backupName, downloadBytes } from "./components/download";
@@ -7,8 +8,9 @@ import { RomPicker } from "./components/RomPicker";
 import { SaveChoice } from "./components/SaveChoice";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { RomError, displayName, inspectRom, type RomInfo } from "./emulator/rom";
-import { loadPreferences, savePreferences, type Preferences } from "./preferences";
+import { loadPreferences, resetCloudRomsChoice, savePreferences, type Preferences } from "./preferences";
 import { fetchAccount, signOut } from "./saves/authApi";
+import { deleteCloudRom, downloadCloudRom, listCloudRoms } from "./saves/cloudApi";
 import { resetPlayerKey } from "./saves/identity";
 import {
   clearCloudSyncState,
@@ -24,6 +26,14 @@ import {
   type LocalGameSave,
   type RomSummary,
 } from "./saves/localSaves";
+import {
+  backUpLibrary,
+  backUpRom,
+  forgetBackUp,
+  mergeLibrary,
+  missingFromAccount,
+  resetBackUpState,
+} from "./saves/romLibrary";
 import { localFromCloud, planLaunch, type LaunchPlan } from "./saves/SaveSync";
 import { bindUiSounds } from "./uiSound";
 
@@ -48,6 +58,13 @@ export function App() {
   const [library, setLibrary] = useState<RomSummary[] | null>(null);
   // Signed-in email; undefined while checking, null when signed out.
   const [account, setAccount] = useState<string | null | undefined>(undefined);
+  // Games kept in the account; null while loading, when signed out, cloud backup is off, or the cloud can't be reached.
+  const [cloud, setCloud] = useState<ListRomsResponse | null>(null);
+  const cloudRoms = cloud?.roms ?? null;
+  const cloudRef = useRef(cloud);
+  cloudRef.current = cloud;
+  // Bumped on every list request, so an answer that arrives late (e.g. after sign-out) is dropped.
+  const cloudRequest = useRef(0);
   const [welcome, setWelcome] = useState(false);
   const [panel, setPanel] = useState<"account" | "controls" | null>(null);
 
@@ -62,6 +79,46 @@ export function App() {
   }, []);
   useEffect(refreshLibrary, [refreshLibrary]);
 
+  /** Signed in with cloud backup on: show and download the account's games. */
+  const cloudLibrary = !!account && prefs.cloudSync;
+  /** ...and the player agreed to keep their games there: upload them too. */
+  const keepGames = cloudLibrary && prefs.cloudRoms === "on";
+  const refreshCloudRoms = useCallback(() => {
+    const request = ++cloudRequest.current;
+    if (!cloudLibrary) {
+      setCloud(null);
+      return;
+    }
+    listCloudRoms().then(
+      (list) => request === cloudRequest.current && setCloud(list),
+      () => request === cloudRequest.current && setCloud(null),
+    );
+  }, [cloudLibrary]);
+  useEffect(refreshCloudRoms, [refreshCloudRoms]);
+
+  // Once the player has agreed (and the account's list has loaded), back up the games already in
+  // this browser. Runs once per sign-in, not on every list refresh; sign-out stops it.
+  const cloudReady = cloud !== null;
+  const [backingUp, setBackingUp] = useState(false);
+  useEffect(() => {
+    if (!keepGames || !cloudReady) return;
+    const stop = new AbortController();
+    setBackingUp(true);
+    backUpLibrary(cloudRef.current!, stop.signal)
+      .then((n) => !stop.signal.aborted && n > 0 && refreshCloudRoms())
+      .finally(() => !stop.signal.aborted && setBackingUp(false));
+    return () => {
+      stop.abort();
+      setBackingUp(false);
+    };
+  }, [keepGames, cloudReady, refreshCloudRoms]);
+
+  // One-time question, asked once the account's list is in: how many games would be uploaded.
+  const offerKeepGames =
+    cloudLibrary && prefs.cloudRoms === "ask" && cloud && library ? { missing: missingFromAccount(library, cloud).length } : null;
+
+  const shelf = useMemo(() => (library ? mergeLibrary(library, cloudRoms) : null), [library, cloudRoms]);
+
   useEffect(() => {
     fetchAccount().then((email) => {
       setAccount(email);
@@ -73,6 +130,8 @@ export function App() {
   const signedIn = useCallback(async (email: string) => {
     resetPlayerKey();
     await clearCloudSyncState();
+    resetBackUpState();
+    setPrefs(resetCloudRomsChoice());
     setAccount(email);
     setWelcome(false);
   }, []);
@@ -80,6 +139,8 @@ export function App() {
   const signedOut = useCallback(async (everywhere: boolean) => {
     await signOut(everywhere);
     await clearCloudSyncState();
+    resetBackUpState();
+    setPrefs(resetCloudRomsChoice());
     setAccount(null);
   }, []);
 
@@ -92,7 +153,8 @@ export function App() {
   }, []);
 
   const openRom = useCallback(
-    async (data: ArrayBuffer, fileName: string) => {
+    /** `picked`: the player chose this file just now (not from the library). */
+    async (data: ArrayBuffer, fileName: string, picked: boolean) => {
       setStage({ name: "loading", label: "Reading cartridge…" });
       try {
         const rom = await inspectRom(data);
@@ -110,6 +172,16 @@ export function App() {
             lastPlayedAt: now,
           }).catch((err) => console.warn("Could not store this ROM locally", err));
           refreshLibrary();
+        }
+        // Only once the account's list is known, so a game it already has isn't sent again. A game the
+        // player removed from the account goes back only if they picked the file again.
+        const inAccount = cloud?.roms.some((r) => r.romHash === rom.romHash);
+        const removed = cloud?.removed.includes(rom.romHash);
+        if (keepGames && cloud && !inAccount && (picked || !removed)) {
+          // Runs in the background; the game starts right away.
+          backUpRom({ romHash: rom.romHash, fileName, title: displayName(rom), data }, picked).then(refreshCloudRoms, (err) =>
+            console.warn("Could not back up this ROM to the account", err),
+          );
         }
         setStage({ name: "loading", label: prefs.cloudSync ? "Checking for saves…" : "Loading save…" });
         let local = await getLocalSave(rom.romHash);
@@ -136,7 +208,7 @@ export function App() {
         setStage({ name: "pick", error: message });
       }
     },
-    [prefs.cloudSync, prefs.rememberRom, refreshLibrary],
+    [prefs.cloudSync, prefs.rememberRom, refreshLibrary, keepGames, cloud, refreshCloudRoms],
   );
 
   const chooseSave = useCallback(async (choice: "local" | "cloud", backup: boolean) => {
@@ -159,25 +231,51 @@ export function App() {
     async (romHash: string) => {
       setStage({ name: "loading", label: "Loading game…" });
       const stored = await getRom(romHash);
-      if (!stored) {
+      if (stored) {
+        await touchRom(romHash);
+        refreshLibrary();
+        await openRom(stored.data, stored.fileName, false);
+        return;
+      }
+      // Not in this browser: fetch it from the account (first play on a new device).
+      const entry = cloudRoms?.find((r) => r.romHash === romHash);
+      if (!entry) {
         refreshLibrary();
         setStage({ name: "pick", error: "That game is no longer stored on this device." });
         return;
       }
-      await touchRom(romHash);
-      refreshLibrary();
-      await openRom(stored.data, stored.fileName);
+      setStage({ name: "loading", label: "Downloading game…" });
+      let data: ArrayBuffer | null;
+      try {
+        data = await downloadCloudRom(romHash);
+      } catch {
+        setStage({ name: "pick", error: "Couldn’t download that game. Check your connection and try again." });
+        return;
+      }
+      if (!data) {
+        refreshCloudRoms();
+        setStage({ name: "pick", error: "That game is no longer in your account." });
+        return;
+      }
+      await openRom(data, entry.fileName, false);
     },
-    [openRom, refreshLibrary],
+    [openRom, refreshLibrary, cloudRoms, refreshCloudRoms],
   );
 
   const removeStored = useCallback(
-    async (romHash: string, alsoSave: boolean) => {
+    async (romHash: string, alsoSave: boolean, alsoCloud: boolean) => {
       await deleteRom(romHash);
       if (alsoSave) await deleteLocalSave(romHash);
+      if (alsoCloud) {
+        await deleteCloudRom(romHash).then(
+          () => forgetBackUp(romHash),
+          (err) => console.warn("Could not remove this ROM from the account", err),
+        );
+        refreshCloudRoms();
+      }
       refreshLibrary();
     },
-    [refreshLibrary],
+    [refreshLibrary, refreshCloudRoms],
   );
 
   const renameStored = useCallback(
@@ -207,10 +305,14 @@ export function App() {
           <RomPicker
             busy={stage.name === "loading" ? stage.label : account === undefined ? "Starting…" : null}
             error={stage.name === "pick" ? stage.error : undefined}
-            library={library}
+            library={shelf}
+            cloudLibrary={cloudLibrary}
             prefs={prefs}
             onPrefs={updatePrefs}
-            onOpen={openRom}
+            onOpen={(data, fileName) => openRom(data, fileName, true)}
+            offerKeepGames={offerKeepGames}
+            onKeepGames={(on) => updatePrefs({ cloudRoms: on ? "on" : "off" })}
+            backingUp={backingUp}
             onPlayStored={openStored}
             onRemoveStored={removeStored}
             onRenameStored={renameStored}

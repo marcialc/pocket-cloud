@@ -51,6 +51,29 @@ export type PutSaveResponse =
 
 export type ListSavesResponse = { saves: CloudSaveMeta[] };
 
+/** Largest Game Boy ROM (MBC5: 8 MiB) and smallest (32 KiB, no mapper). */
+export const MAX_ROM_BYTES = 8 * 1024 * 1024;
+export const MIN_ROM_BYTES = 32 * 1024;
+
+/** Games one account can keep in the cloud library. */
+export const MAX_CLOUD_ROMS = 100;
+
+/** A ROM in the signed-in player's cloud library (bytes fetched separately). */
+export type CloudRomMeta = {
+  romHash: string;
+  fileName: string;
+  /** Cartridge header title. */
+  title: string;
+  size: number;
+  uploadedAt: number;
+};
+
+export type ListRomsResponse = {
+  roms: CloudRomMeta[];
+  /** Games the player removed from the account; background uploads of these are refused. */
+  removed: string[];
+};
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;

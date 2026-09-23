@@ -5,7 +5,7 @@ import { bindKeyboard } from "../emulator/controls";
 import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
 import { defaultPalette, displayName } from "../emulator/rom";
-import type { Preferences } from "../preferences";
+import { resetCloudRomsChoice, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
 import { resetPlayerKey } from "../saves/identity";
@@ -238,6 +238,7 @@ export function GameScreen({ session, prefs, onPrefs, onEject }: Props) {
     sync?.destroy();
     await change();
     await clearCloudSyncState();
+    resetCloudRomsChoice();
     window.location.reload();
   };
 
