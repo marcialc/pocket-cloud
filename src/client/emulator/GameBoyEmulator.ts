@@ -20,6 +20,8 @@ export interface GameBoyEmulator {
   readonly running: boolean;
 
   buttonDown(button: GameBoyButton): void;
+  /** `performance.now()` of the last button press, 0 if none: tells real play from a game's demo. */
+  readonly lastInputAt: number;
   buttonUp(button: GameBoyButton): void;
 
   /** Battery-backed cartridge RAM, or null if the cartridge has none. */

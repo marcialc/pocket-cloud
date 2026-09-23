@@ -14,12 +14,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "PLAYER_SAVE", "class_name": "PlayerSaveDO" },
-      { "name": "AUTH", "class_name": "AuthDO" }
+      { "name": "AUTH", "class_name": "AuthDO" },
+      { "name": "SOCIAL", "class_name": "SocialDO" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["PlayerSaveDO"] },
-    { "tag": "v2", "new_sqlite_classes": ["AuthDO"] }
+    { "tag": "v2", "new_sqlite_classes": ["AuthDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["SocialDO"] }
   ],
   // Signed-in players' ROM library, one object per ROM: roms/<playerId>/<romHash>.
   //   pnpm wrangler r2 bucket create pocket-cloud-roms   (once, before the first deploy)

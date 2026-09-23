@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ListRomsResponse } from "../shared/api";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
+import { FriendsPanel } from "./components/FriendsPanel";
 import { backupName, downloadBytes } from "./components/download";
 import { GameScreen } from "./components/GameScreen";
+import { InviteDialog } from "./components/InviteDialog";
 import { RomPicker } from "./components/RomPicker";
 import { SaveChoice } from "./components/SaveChoice";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -13,6 +15,7 @@ import { fetchAccount, signOut } from "./saves/authApi";
 import { deleteCloudRom, downloadCloudRom, listCloudRoms } from "./saves/cloudApi";
 import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
+import { clearInvite, takeInvite } from "./saves/invite";
 import {
   clearCloudSyncState,
   deleteLocalSave,
@@ -70,7 +73,10 @@ export function App() {
   // Bumped on every list request, so an answer that arrives late (e.g. after sign-out) is dropped.
   const cloudRequest = useRef(0);
   const [welcome, setWelcome] = useState(false);
-  const [panel, setPanel] = useState<"account" | "controls" | null>(null);
+  // A friend's invite link this browser opened; it asks to sign in itself, so no welcome screen.
+  const [invite, setInvite] = useState(takeInvite);
+  const inviteRef = useRef(invite);
+  const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
 
   // App-wide preferences that live outside any one screen.
   useEffect(() => {
@@ -126,7 +132,7 @@ export function App() {
   useEffect(() => {
     fetchAccount().then((email) => {
       setAccount(email);
-      if (!email && !loadPreferences().skipSignIn) setWelcome(true);
+      if (!email && !loadPreferences().skipSignIn && !inviteRef.current) setWelcome(true);
     });
   }, []);
 
@@ -350,6 +356,7 @@ export function App() {
             account={account ?? null}
             onAccount={() => setPanel("account")}
             onControls={() => setPanel("controls")}
+            onFriends={() => setPanel("friends")}
           />
           {panel === "account" && (
             <CloudPanel
@@ -361,6 +368,19 @@ export function App() {
                 setPanel(null);
               }}
               onClose={() => setPanel(null)}
+            />
+          )}
+          {panel === "friends" && account && <FriendsPanel onClose={() => setPanel(null)} />}
+          {invite && stage.name === "pick" && (
+            <InviteDialog
+              token={invite}
+              account={account}
+              onSignedIn={signedIn}
+              onDone={(openFriends) => {
+                clearInvite();
+                setInvite(null);
+                if (openFriends) setPanel("friends");
+              }}
             />
           )}
           {panel === "controls" && (

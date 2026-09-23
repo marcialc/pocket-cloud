@@ -18,9 +18,11 @@ import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
 import { isCrossSite, json, methodNotAllowed } from "./http";
 import { authenticate } from "./identity";
 import { handleRoms } from "./roms";
+import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
 
 export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
+export { SocialDO } from "./durable-objects/SocialDO";
 
 /**
  * API surface (everything else is static assets, see wrangler.jsonc):
@@ -33,6 +35,7 @@ export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
  *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace them
+ *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *
  * Saves routes accept either an email session cookie or the anonymous player
@@ -43,10 +46,10 @@ export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
  * only on /api/roms, and only from a signed-in account.
  */
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     try {
-      return await route(request, env, url);
+      return await route(request, env, url, ctx);
     } catch (err) {
       console.error(JSON.stringify({ message: "unhandled error", path: url.pathname, error: String(err) }));
       return json({ error: "internal_error" }, 500);
@@ -54,14 +57,19 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function route(request: Request, env: Env, url: URL): Promise<Response> {
+async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   if (path === "/api/health") return json({ ok: true, time: Date.now() });
   if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
   if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
   const settings = path === "/api/settings";
-  if (!roms && !settings && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  const social = path.startsWith("/api/social/");
+  if (social) {
+    const preview = await handleInvitePreview(request, env, path);
+    if (preview) return preview;
+  }
+  if (!roms && !settings && !social && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
 
   const identity = await authenticate(request, env);
   if ("error" in identity) {
@@ -83,6 +91,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // Settings follow the account; an anonymous key keeps them on its device.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
     return handleSettings(request, stub);
+  }
+  if (social) {
+    // Friends know each other by account; an anonymous key has no profile.
+    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
+    return handleSocial(request, env, url, identity.playerId);
   }
 
   if (path === "/api/saves") {
@@ -116,6 +129,17 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         ...(body.rtcBase !== undefined ? { rtcBase: body.rtcBase } : {}),
         ...(body.force ? { force: true } : {}),
       });
+      // Leaderboards are best effort: the save answers without waiting on the shared SocialDO.
+      if (result.ok && identity.access.kind === "session") {
+        ctx.waitUntil(
+          recordSaveScores(env, identity.playerId, {
+            romHash,
+            gameId: body.gameId,
+            sram,
+            ...(body.playTime !== undefined ? { playTime: body.playTime } : {}),
+          }),
+        );
+      }
       return json(result satisfies PutSaveResponse, result.ok ? 200 : 409);
     }
     case "DELETE": {

@@ -32,6 +32,8 @@ type Props = {
   account: string | null;
   onAccount: () => void;
   onControls: () => void;
+  /** Friends and leaderboards (signed in only). */
+  onFriends: () => void;
 };
 
 const ACCEPT = ".gb,.gbc,.sgb,application/octet-stream";
@@ -58,6 +60,7 @@ export function RomPicker({
   account,
   onAccount,
   onControls,
+  onFriends,
 }: Props) {
   const library = loadedLibrary ?? [];
   const keepingGames = cloudLibrary && prefs.cloudRoms === "on";
@@ -129,6 +132,13 @@ export function RomPicker({
       <header className="page-head">
         <Brand />
         <div className="head-actions">
+          {account && (
+            <button type="button" className="btn small" onClick={onFriends}>
+              <Icon name="friends" size={18} />
+              <span className="hide-narrow">FRIENDS</span>
+              <span className="sr-only">Friends and leaderboards</span>
+            </button>
+          )}
           <button type="button" className="btn small" onClick={onControls}>
             <Icon name="gamepad" size={18} />
             <span className="hide-narrow">CONTROLS</span>

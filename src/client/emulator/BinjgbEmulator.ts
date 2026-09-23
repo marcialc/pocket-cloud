@@ -59,6 +59,7 @@ export class BinjgbEmulator implements GameBoyEmulator {
   private lastRafSec = 0;
   private leftoverTicks = 0;
   private readonly pressed = new Set<GameBoyButton>();
+  lastInputAt = 0;
 
   private sramDirty = false;
   private sramTimer: ReturnType<typeof setInterval> | null = null;
@@ -130,6 +131,7 @@ export class BinjgbEmulator implements GameBoyEmulator {
   }
 
   buttonDown(button: GameBoyButton): void {
+    this.lastInputAt = performance.now();
     this.pressed.add(button);
     this.setButton(button, true);
   }

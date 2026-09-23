@@ -3,16 +3,19 @@ import type { Session } from "../App";
 import { BinjgbEmulator } from "../emulator/BinjgbEmulator";
 import { bindKeyboard } from "../emulator/controls";
 import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import { scoreWatcherFor } from "../emulator/scoreWatch";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
 import { defaultPalette, displayName } from "../emulator/rom";
 import { resetCloudRomsChoice, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
 import { resetPlayerKey } from "../saves/identity";
+import { reportScore } from "../saves/socialApi";
 import { clearCloudSyncState } from "../saves/localSaves";
 import { SaveSync, type SyncStatus } from "../saves/SaveSync";
 import { CloudPanel } from "./CloudPanel";
 import { ControlsPanel } from "./ControlsPanel";
+import { FriendsPanel } from "./FriendsPanel";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
@@ -43,7 +46,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"account" | "controls" | null>(null);
+  const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
   const [menu, setMenu] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [scale, setScale] = useState(3);
@@ -100,6 +103,33 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session
   }, [session]);
+
+  // Games with a score in RAM (Tetris): follow it while playing and send the best to the leaderboard.
+  useEffect(() => {
+    const watcher = signedIn && emulator ? scoreWatcherFor(session.rom.gameId) : null;
+    if (!emulator || !watcher) return;
+    const { romHash, gameId } = session.rom;
+    let reported = 0;
+    const report = (keepalive = false) => {
+      const best = watcher.best();
+      if (best <= reported) return;
+      reported = best;
+      reportScore(romHash, watcher.board, best, gameId, keepalive).catch((err) => {
+        reported = 0;
+        console.warn("Could not send the score to the leaderboard", err);
+      });
+    };
+    const sample = setInterval(() => emulator.running && watcher.sample(emulator), 500);
+    const send = setInterval(report, 30_000);
+    const onHide = () => document.hidden && report(true);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      clearInterval(sample);
+      clearInterval(send);
+      document.removeEventListener("visibilitychange", onHide);
+      report(true);
+    };
+  }, [emulator, signedIn, session.rom]);
 
   // Keyboard input; re-bound whenever the player remaps keys.
   useEffect(() => (emulator ? bindKeyboard(emulator, prefs.keyBindings) : undefined), [emulator, prefs.keyBindings]);
@@ -363,6 +393,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           <button type="button" className="ibtn tip" data-tip="Controls" aria-label="Controls" onClick={() => setPanel("controls")}>
             <Icon name="gamepad" size={22} />
           </button>
+          {signedIn && (
+            <button type="button" className="ibtn tip" data-tip="Leaderboard" aria-label="Friends and leaderboard" onClick={() => setPanel("friends")}>
+              <Icon name="trophy" />
+            </button>
+          )}
           <button type="button" className="ibtn tip" data-tip="Account" aria-label="Account and saves" onClick={() => setPanel("account")}>
             <Icon name="user" />
           </button>
@@ -422,6 +457,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("controls"))}>
                     <Icon name="gamepad" size={24} /> Controls
                   </button>
+                  {signedIn && (
+                    <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("friends"))}>
+                      <Icon name="trophy" size={22} /> Leaderboard
+                    </button>
+                  )}
                   <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("account"))}>
                     <Icon name="user" size={22} /> Account
                   </button>
@@ -454,6 +494,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       {panel === "controls" && (
         <ControlsPanel bindings={prefs.keyBindings} signedIn={signedIn} onChange={(keyBindings) => onPrefs({ keyBindings })} onClose={() => setPanel(null)} />
       )}
+
+      {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} onClose={() => setPanel(null)} />}
 
       {panel === "account" && (
         <CloudPanel
