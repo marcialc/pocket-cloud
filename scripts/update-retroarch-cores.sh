@@ -2,8 +2,8 @@
 # Refresh the vendored RetroArch Emscripten cores (for Nostalgist) from the
 # libretro buildbot stable 1.22.2 release, via Nostalgist's upstream mirror.
 #
-#   scripts/update-retroarch-cores.sh                 # every known core
-#   scripts/update-retroarch-cores.sh gambatte        # just these
+#   scripts/update-retroarch-cores.sh                 # the shipped cores (mgba)
+#   scripts/update-retroarch-cores.sh gambatte        # just these (any known core)
 #
 # buildbot.libretro.com only publishes the whole release as one ~750 MB
 # RetroArch.7z, so we fetch the per-core zips from
@@ -28,6 +28,8 @@ DEST="$ROOT/public/vendor/retroarch"
 MANIFEST="$DEST/VENDOR.md"
 
 known_cores=(mgba gambatte)
+# What public/ ships; gambatte is known but not shipped (see VENDOR.md).
+shipped_cores=(mgba)
 core_license() {
   case "$1" in
     mgba) echo "mgba-LICENSE https://raw.githubusercontent.com/libretro/mgba/c758314a639aa0066e7b65a8341448181b73c804/LICENSE" ;;
@@ -37,7 +39,7 @@ core_license() {
 }
 
 CORES=("$@")
-[ ${#CORES[@]} -gt 0 ] || CORES=("${known_cores[@]}")
+[ ${#CORES[@]} -gt 0 ] || CORES=("${shipped_cores[@]}")
 for core in "${CORES[@]}"; do
   if ! core_license "$core" >/dev/null; then
     echo "Unknown core '$core'. Known: ${known_cores[*]}. Add it to this script and VENDOR.md first." >&2

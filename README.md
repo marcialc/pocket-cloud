@@ -129,8 +129,8 @@ future game-state features below).
 
 The rest of the app only sees `Emulator`; a different core means a new
 adapter class, created in `createEmulator.ts` for the platforms it plays
-(`src/shared/platforms.ts` lists them; only Game Boy and Game Boy Color are
-enabled).
+(`src/shared/platforms.ts` lists them; Game Boy and Game Boy Color play on
+binjgb, Game Boy Advance on `NostalgistEmulator`).
 
 ### Headless smoke test
 
@@ -404,6 +404,11 @@ that it is deployed.
 
 - This project: MIT — `LICENSE`.
 - binjgb © 2016 Ben Smith, MIT — `public/vendor/binjgb/LICENSE`.
+- RetroArch (GPL-3.0) and mGBA (MPL-2.0), served as the GBA core, and
+  Nostalgist.js (MIT) — see `public/vendor/retroarch/VENDOR.md`.
+- Players see these at `/licenses` (`public/licenses.html`, linked from
+  the start screen footer and the Account panel): each component's license
+  text and exact source commit. Update it when a vendored component changes.
 - pret/pokered is used only as documentation/reference; none of its code or
   assets are included.
 - Game Boy is a trademark of Nintendo. This project is not affiliated with or

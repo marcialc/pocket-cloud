@@ -472,7 +472,12 @@ export function RomPicker({
             )}
           </span>
         )}
-        <span>Bring your own legally dumped cartridge.</span>
+        <span>
+          Bring your own legally dumped cartridge.{" · "}
+          <a className="link on-dark" href="/licenses" target="_blank" rel="noopener">
+            Open-source licenses
+          </a>
+        </span>
       </footer>
 
       {confirmRemove && (

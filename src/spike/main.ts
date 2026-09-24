@@ -51,6 +51,8 @@ type Button = "up" | "down" | "left" | "right" | "a" | "b" | "l" | "r" | "start"
 const CORE_BASE = new URL(`${import.meta.env.BASE_URL}vendor/retroarch/`, location.href);
 /** Directory under saves/ is RetroArch's corename (Nostalgist's coreInfoMap). */
 const CORE_SAVE_DIR: Record<Core, string> = { mgba: "mGBA", gambatte: "Gambatte" };
+/** Cores in public/vendor/retroarch. gambatte isn't shipped (see its VENDOR.md). */
+const VENDORED_CORES: readonly Core[] = ["mgba"];
 const SAVES_DIR = "/home/web_user/retroarch/userdata/saves";
 const PROBE_INTERVAL_MS = 500;
 /** A command sent to a Module that then exited (or a paused core) never replies. */
@@ -687,6 +689,11 @@ romInput.addEventListener("change", () => {
   const picked = coreFor(file.name);
   if (!picked) {
     log(`unsupported extension: ${file.name}`, true);
+    return;
+  }
+  if (!VENDORED_CORES.includes(picked)) {
+    log(`${file.name} needs the ${picked} core, which isn't vendored. Add it with: scripts/update-retroarch-cores.sh ${picked}`, true);
+    setStatus(`no ${picked} core`);
     return;
   }
   exitCurrent();

@@ -1,0 +1,5 @@
+# License texts have no file extension; serve them as text so they open in the browser.
+/vendor/*/LICENSE
+  Content-Type: text/plain; charset=utf-8
+/vendor/retroarch/licenses/*
+  Content-Type: text/plain; charset=utf-8
