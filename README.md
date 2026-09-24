@@ -59,7 +59,8 @@ src/
   client/                     React app (browser)
     App.tsx                   pick ROM → plan save → play
     emulator/
-      GameBoyEmulator.ts      emulator-agnostic interface
+      Emulator.ts             emulator-agnostic interface
+      createEmulator.ts       picks the emulator for a ROM's platform
       keyBindings.ts          key binding model (defaults, remap, labels)
       BinjgbEmulator.ts       binjgb adapter (frame loop, audio, input, SRAM)
       binjgbModule.ts         loads the vendored Emscripten build
@@ -126,8 +127,10 @@ future game-state features below).
 | Reset | capture SRAM, delete + recreate the core, restore SRAM (like a power cycle) |
 | Memory | `_emulator_read_mem(addr)` exposed as `readMemory()` for future game-state extraction |
 
-The rest of the app only sees `GameBoyEmulator`; a different core means a new
-adapter class.
+The rest of the app only sees `Emulator`; a different core means a new
+adapter class, created in `createEmulator.ts` for the platforms it plays
+(`src/shared/platforms.ts` lists them; only Game Boy and Game Boy Color are
+enabled).
 
 ### Headless smoke test
 
@@ -178,7 +181,7 @@ use it (`403 sign_in_required`).
   `409 removed`; it only goes back when the player picks the file again
   (`picked=1`), which clears the marker. Browsers keep their own local copies.
 - **Limits.** The Worker checks the bytes hash to the `romHash` in the URL,
-  reads at most 8 MiB whether or not `Content-Length` is sent, needs 32 KiB
+  reads at most 32 MiB whether or not `Content-Length` is sent, needs 1 KiB
   or more, and an account holds at most 100 games (`403 library_full`,
   re-checked after the write so parallel uploads can't overshoot).
 - Custom names (Rename) and "last played" stay per device.
@@ -357,7 +360,7 @@ still persist locally and upload when back online).
 
 ## Future extension points
 
-- **Game-state extraction:** `GameBoyEmulator.readMemory()` + a game's
+- **Game-state extraction:** `Emulator.readMemory()` + a game's
   known memory addresses → a per-game state reader (name, position, money,
   inventory, …), polled after frames. Results can be sent to `PlayerSaveDO`
   as profile/achievement data.

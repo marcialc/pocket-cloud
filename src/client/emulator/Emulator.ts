@@ -1,16 +1,14 @@
+import type { Button } from "../../shared/platforms";
+
 /**
  * Emulator-agnostic interface. The rest of the app only talks to this; the
  * binjgb specifics live in BinjgbEmulator. Swapping emulators means writing a
  * new adapter, not touching UI or save code.
+ *
+ * Optional members are capabilities only some cores have (the Game Boy's
+ * real-time clock, raw memory reads); callers check before using them.
  */
-
-export type GameBoyButton = "up" | "down" | "left" | "right" | "a" | "b" | "start" | "select";
-
-export const GAME_BOY_BUTTONS: readonly GameBoyButton[] = [
-  "up", "down", "left", "right", "a", "b", "start", "select",
-];
-
-export interface GameBoyEmulator {
+export interface Emulator {
   loadRom(rom: ArrayBuffer): Promise<void>;
   /** Start or resume execution. */
   start(): void;
@@ -19,10 +17,11 @@ export interface GameBoyEmulator {
   reset(): void;
   readonly running: boolean;
 
-  buttonDown(button: GameBoyButton): void;
+  /** Buttons the loaded platform doesn't have are ignored. */
+  buttonDown(button: Button): void;
   /** `performance.now()` of the last button press, 0 if none: tells real play from a game's demo. */
   readonly lastInputAt: number;
-  buttonUp(button: GameBoyButton): void;
+  buttonUp(button: Button): void;
 
   /** Battery-backed cartridge RAM, or null if the cartridge has none. */
   getSram(): Uint8Array | null;
@@ -44,7 +43,12 @@ export interface GameBoyEmulator {
    * advances with emulated time, so it stops while paused or in a background
    * tab and falls behind until the next boot or reset().
    */
-  setClock(baseMs: number): void;
+  setClock?(baseMs: number): void;
+  /**
+   * Called if the core fails after start() (cores that start asynchronously);
+   * the game then stays stopped. Returns an unsubscribe function.
+   */
+  onError?(listener: (error: Error) => void): () => void;
   /** Deliver any pending onSramWrite notification now (e.g. before the page unloads). */
   flushSramWrites(): void;
 
@@ -56,7 +60,7 @@ export interface GameBoyEmulator {
    * game-state extraction (player position, party, badges...) using addresses
    * from pret/pokered's symbol file.
    */
-  readMemory(address: number): number;
+  readMemory?(address: number): number;
 
   destroy(): void;
 }

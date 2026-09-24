@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
-import { BinjgbEmulator } from "../emulator/BinjgbEmulator";
+import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { bindKeyboard } from "../emulator/controls";
-import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import { createEmulator } from "../emulator/createEmulator";
+import type { Emulator } from "../emulator/Emulator";
 import { scoreWatcherFor } from "../emulator/scoreWatch";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
-import { defaultPalette, displayName } from "../emulator/rom";
+import { displayName } from "../emulator/rom";
 import { resetCloudRomsChoice, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
@@ -31,8 +32,6 @@ type Props = {
   onEject: () => void;
 };
 
-const LCD_W = 160;
-const LCD_H = 144;
 const DIM_AFTER_MS = 2500;
 // iPhone Safari can't make a page element fullscreen, so the button is hidden there.
 const CAN_FULLSCREEN = document.fullscreenEnabled === true;
@@ -41,7 +40,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const root = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [emulator, setEmulator] = useState<GameBoyEmulator | null>(null);
+  const [emulator, setEmulator] = useState<Emulator | null>(null);
   const [sync, setSync] = useState<SaveSync | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
   const [paused, setPaused] = useState(false);
@@ -54,11 +53,14 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [flash, setFlash] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const title = displayName(session.rom);
+  const platform = PLATFORMS[session.rom.platform];
+  const { width: LCD_W, height: LCD_H } = platform.screen;
+  const bindings = prefs.controls[platform.controls];
 
   // Boot: one emulator + one sync pipeline per session.
   useEffect(() => {
     let disposed = false;
-    const emu = new BinjgbEmulator({ canvas: canvas.current!, palette: defaultPalette(session.rom) });
+    const emu = createEmulator(session.rom, canvas.current!);
     let saveSync: SaveSync | null = null;
 
     (async () => {
@@ -73,11 +75,12 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       }
       // A save without a clock base (new game, or made before the clock was emulated) starts its clock now.
       const rtcBase = session.save?.rtcBase ?? Date.now();
-      emu.setClock(rtcBase);
+      emu.setClock?.(rtcBase);
       saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase);
       saveSync.subscribe(setStatus);
       setStatus(saveSync.getStatus());
       if (session.push) saveSync.requestPush(session.push.force);
+      emu.onError?.((err) => !disposed && setError(err.message));
       emu.start();
       saveSync.setPlaying(true);
       setEmulator(emu);
@@ -90,6 +93,9 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
     return () => {
       disposed = true;
+      // Stop the game at once (it keeps running until destroy(), which waits for the upload below).
+      // Pausing delivers the last SRAM write first, so the flush still captures it.
+      emu.pause();
       // Capture the latest SRAM before the core goes away, then tear down.
       const s = saveSync;
       if (s) {
@@ -132,7 +138,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   }, [emulator, signedIn, session.rom]);
 
   // Keyboard input; re-bound whenever the player remaps keys.
-  useEffect(() => (emulator ? bindKeyboard(emulator, prefs.keyBindings) : undefined), [emulator, prefs.keyBindings]);
+  useEffect(() => (emulator ? bindKeyboard(emulator, bindings) : undefined), [emulator, bindings]);
 
   // Mirror preferences into the running emulator / sync loop.
   useEffect(() => {
@@ -263,7 +269,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     const sram = await sync.takeCloud();
     if (sram) {
       emulator.loadSram(sram);
-      emulator.setClock(sync.getRtcBase());
+      emulator.setClock?.(sync.getRtcBase());
       emulator.reset();
     }
   };
@@ -294,7 +300,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       ref={root}
       onMouseMove={wake}
       onPointerDown={wake}
-      style={{ "--scale": scale } as CSSProperties}
+      style={{ "--scale": scale, "--lcd-w": LCD_W, "--lcd-h": LCD_H } as CSSProperties}
     >
       <header className="game-bar">
         <Brand />
@@ -355,7 +361,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         </section>
       </div>
 
-      <TouchControls emulator={emulator} haptics={prefs.haptics} />
+      <TouchControls emulator={emulator} platform={session.rom.platform} haptics={prefs.haptics} />
 
       <div className="toolbar-wrap">
         <div className="toolbar plastic" role="toolbar" aria-label="Game controls">
@@ -407,7 +413,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         )}
       </div>
 
-      <KeysHint bindings={prefs.keyBindings} onEdit={() => setPanel("controls")} />
+      <KeysHint platform={session.rom.platform} bindings={bindings} onEdit={() => setPanel("controls")} />
 
       {menu && (
         <div className="backdrop sheet-backdrop" onClick={() => setMenu(false)}>
@@ -492,7 +498,13 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       )}
 
       {panel === "controls" && (
-        <ControlsPanel bindings={prefs.keyBindings} signedIn={signedIn} onChange={(keyBindings) => onPrefs({ keyBindings })} onClose={() => setPanel(null)} />
+        <ControlsPanel
+          bindings={prefs.controls}
+          platform={session.rom.platform}
+          signedIn={signedIn}
+          onChange={(controls) => onPrefs({ controls })}
+          onClose={() => setPanel(null)}
+        />
       )}
 
       {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} onClose={() => setPanel(null)} />}
@@ -581,14 +593,20 @@ function ResetConfirm({
   );
 }
 
-function KeysHint({ bindings, onEdit }: { bindings: KeyBindings; onEdit: () => void }) {
-  const first = (codes: string[]) => (codes[0] ? keyLabel(codes[0]) : "none");
+function KeysHint({ platform, bindings, onEdit }: { platform: PlatformId; bindings: KeyBindings; onEdit: () => void }) {
+  const first = (codes: string[] = []) => (codes[0] ? keyLabel(codes[0]) : "none");
   const dpad = ["up", "down", "left", "right"] as const;
-  const arrows = dpad.every((d) => bindings[d][0] === `Arrow${d[0]!.toUpperCase()}${d.slice(1)}`);
+  const arrows = dpad.every((d) => bindings[d]?.[0] === `Arrow${d[0]!.toUpperCase()}${d.slice(1)}`);
+  const buttons = PLATFORMS[platform].buttons.filter((b) => !(dpad as readonly string[]).includes(b));
   return (
     <p className="keys-hint">
-      {arrows ? "Arrows move" : dpad.map((d) => <kbd key={d}>{first(bindings[d])}</kbd>)} · <kbd>{first(bindings.a)}</kbd> A ·{" "}
-      <kbd>{first(bindings.b)}</kbd> B · <kbd>{first(bindings.start)}</kbd> Start · <kbd>{first(bindings.select)}</kbd> Select
+      {arrows ? "Arrows move" : dpad.map((d) => <kbd key={d}>{first(bindings[d])}</kbd>)}
+      {buttons.map((b) => (
+        <Fragment key={b}>
+          {" · "}
+          <kbd>{first(bindings[b])}</kbd> {buttonLabel(platform, b)}
+        </Fragment>
+      ))}
       <button type="button" className="link on-dark" onClick={onEdit}>
         Change
       </button>

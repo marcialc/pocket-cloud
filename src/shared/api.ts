@@ -5,6 +5,7 @@
  * of battery RAM (Pokémon Red uses 32 KiB), so the overhead is negligible.
  */
 
+import { CONTROLS_IDS, PLATFORMS, type ControlsId } from "./platforms";
 import type { Shelf } from "./shelf";
 
 /** Largest battery RAM any supported cartridge type exposes (MBC5: 128 KiB). */
@@ -56,9 +57,10 @@ export type PutSaveResponse =
 
 export type ListSavesResponse = { saves: CloudSaveMeta[] };
 
-/** Largest Game Boy ROM (MBC5: 8 MiB) and smallest (32 KiB, no mapper). */
-export const MAX_ROM_BYTES = 8 * 1024 * 1024;
-export const MIN_ROM_BYTES = 32 * 1024;
+/** Largest ROM of a supported platform (GBA: 32 MiB). */
+export const MAX_ROM_BYTES = 32 * 1024 * 1024;
+/** Smallest file the cloud library takes; real ROMs are bigger (NES and Master System from 16 KiB). */
+export const MIN_ROM_BYTES = 1024;
 
 /** Games one account can keep in the cloud library. */
 export const MAX_CLOUD_ROMS = 100;
@@ -103,11 +105,23 @@ export async function sha256Hex(data: ArrayBuffer | Uint8Array): Promise<string>
 /**
  * Account-wide settings for a signed-in player: the keyboard controls and how
  * the game library is organized. Each is null until the account has saved it.
+ *
+ * `keyBindings` are the Game Boy controls, as before other platforms existed,
+ * so older clients keep reading and writing them; `platformKeyBindings` holds
+ * the other platforms' controls by platform id ("gba", "snes", ...).
  */
-export type SettingsResponse = { keyBindings: Record<string, string[]> | null; shelf: Shelf | null };
+export type SettingsResponse = {
+  keyBindings: Record<string, string[]> | null;
+  platformKeyBindings: Record<string, Record<string, string[]>> | null;
+  shelf: Shelf | null;
+};
 
-/** Sends one or both settings; the ones left out are kept. */
-export type PutSettingsRequest = { keyBindings?: Record<string, string[]>; shelf?: Shelf };
+/** Sends some of the settings; the ones left out are kept. */
+export type PutSettingsRequest = {
+  keyBindings?: Record<string, string[]>;
+  platformKeyBindings?: Record<string, Record<string, string[]>>;
+  shelf?: Shelf;
+};
 
 /**
  * Structural check for stored key bindings (button -> KeyboardEvent.code list).
@@ -120,10 +134,25 @@ export function isKeyBindings(value: unknown): value is Record<string, string[]>
     entries.length <= 16 &&
     entries.every(
       ([button, codes]) =>
-        /^[a-z]{1,16}$/.test(button) &&
+        /^[a-z][a-z0-9]{0,15}$/.test(button) &&
         Array.isArray(codes) &&
         codes.length <= 8 &&
         codes.every((c) => typeof c === "string" && c.length > 0 && c.length <= 32),
     )
+  );
+}
+
+/**
+ * Check for the other platforms' key bindings: known platforms other than the
+ * Game Boy (whose controls are `keyBindings`), each with only its own buttons.
+ */
+export function isPlatformKeyBindings(value: unknown): value is Record<string, Record<string, string[]>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(
+    ([id, bindings]) =>
+      id !== "gb" &&
+      CONTROLS_IDS.some((c) => c === id) &&
+      isKeyBindings(bindings) &&
+      Object.keys(bindings).every((button) => PLATFORMS[id as ControlsId].buttons.some((b) => b === button)),
   );
 }

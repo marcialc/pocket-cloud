@@ -1,5 +1,6 @@
+import { isGameBoyGameId } from "../../shared/platforms";
 import type { BoardId } from "../../shared/social";
-import type { GameBoyEmulator } from "./GameBoyEmulator";
+import type { Emulator } from "./Emulator";
 
 /**
  * Leaderboard scores that live only in a game's work RAM (arcade-style games
@@ -10,7 +11,7 @@ import type { GameBoyEmulator } from "./GameBoyEmulator";
 /** Follows one game's score from its RAM and remembers the best one seen this session. */
 export type ScoreWatcher = {
   board: BoardId;
-  sample(emulator: Pick<GameBoyEmulator, "readMemory" | "lastInputAt">, now?: number): void;
+  sample(emulator: Pick<Emulator, "readMemory" | "lastInputAt">, now?: number): void;
   best(): number;
 };
 
@@ -38,6 +39,7 @@ function tetris(): ScoreWatcher {
   return {
     board: "tetris",
     sample(emulator, now = performance.now()) {
+      if (!emulator.readMemory) return;
       const score = readBcd([emulator.readMemory(0xc0a0), emulator.readMemory(0xc0a1), emulator.readMemory(0xc0a2)]);
       if (score === null) return;
       if (score === 0) roundStartedAt = now;
@@ -51,7 +53,8 @@ const WATCHERS: Record<string, () => ScoreWatcher> = {
   TETRIS: tetris,
 };
 
-/** A watcher for this cartridge (by header title), or null if it has no RAM score we follow. */
+/** A watcher for this cartridge (by header title), or null if it has no RAM score we follow. Game Boy only. */
 export function scoreWatcherFor(gameId: string): ScoreWatcher | null {
+  if (!isGameBoyGameId(gameId)) return null;
   return WATCHERS[gameId]?.() ?? null;
 }

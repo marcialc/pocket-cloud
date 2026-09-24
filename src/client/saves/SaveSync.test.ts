@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import type { Emulator } from "../emulator/Emulator";
 import type { RomInfo } from "../emulator/rom";
 import { bytesToBase64 } from "../../shared/api";
 import { deleteLocalSave, getLocalSave, type LocalGameSave } from "./localSaves";
 import { SaveSync } from "./SaveSync";
 
 const ROM: RomInfo = {
-  gameId: "POKEMON RED", title: "POKEMON RED", romHash: "e".repeat(64),
+  platform: "gb", gameId: "POKEMON RED", title: "POKEMON RED", romHash: "e".repeat(64),
   cartridgeType: 0x13, hasBattery: true, cgb: false, size: 0x100000,
 };
 const RTC_BASE = 1_700_000_000_000;
@@ -29,7 +29,7 @@ function fakeEmulator() {
       pending = true;
     },
   };
-  return emu as unknown as GameBoyEmulator & typeof emu;
+  return emu as unknown as Emulator & typeof emu;
 }
 
 beforeEach(() => {

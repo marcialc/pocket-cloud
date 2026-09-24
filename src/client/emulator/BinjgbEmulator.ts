@@ -1,9 +1,10 @@
-import type { GameBoyButton, GameBoyEmulator } from "./GameBoyEmulator";
+import type { Button } from "../../shared/platforms";
+import type { Emulator } from "./Emulator";
 import { loadBinjgb, type BinjgbModule } from "./binjgbModule";
 import { hasRtc, rtcRegisters } from "./rtc";
 
 /**
- * GameBoyEmulator adapter for binjgb (https://github.com/binji/binjgb).
+ * Emulator adapter for binjgb (https://github.com/binji/binjgb).
  *
  * The frame loop, tick accounting and audio scheduling follow upstream's
  * docs/simple.js. Differences: rendering goes through a 2D canvas scaled with
@@ -34,7 +35,7 @@ export type BinjgbOptions = {
 
 type JoypadSetter = (e: number, set: number) => void;
 
-export class BinjgbEmulator implements GameBoyEmulator {
+export class BinjgbEmulator implements Emulator {
   private module: BinjgbModule | null = null;
   private e = 0;
   private joypadPtr = 0;
@@ -56,7 +57,7 @@ export class BinjgbEmulator implements GameBoyEmulator {
   private rafId: number | null = null;
   private lastRafSec = 0;
   private leftoverTicks = 0;
-  private readonly pressed = new Set<GameBoyButton>();
+  private readonly pressed = new Set<Button>();
   lastInputAt = 0;
 
   private sramDirty = false;
@@ -128,13 +129,13 @@ export class BinjgbEmulator implements GameBoyEmulator {
     if (wasRunning) this.start();
   }
 
-  buttonDown(button: GameBoyButton): void {
+  buttonDown(button: Button): void {
     this.lastInputAt = performance.now();
     this.pressed.add(button);
     this.setButton(button, true);
   }
 
-  buttonUp(button: GameBoyButton): void {
+  buttonUp(button: Button): void {
     this.pressed.delete(button);
     this.setButton(button, false);
   }
@@ -282,14 +283,15 @@ export class BinjgbEmulator implements GameBoyEmulator {
     write(0x0000, 0x00);
   }
 
-  private setButton(button: GameBoyButton, down: boolean): void {
+  private setButton(button: Button, down: boolean): void {
     const m = this.module;
     if (!m || !this.e) return;
-    const setters: Record<GameBoyButton, JoypadSetter> = {
+    // The Game Boy has no other buttons (x, y, l, r...); those are ignored.
+    const setters: Partial<Record<Button, JoypadSetter>> = {
       up: m._set_joyp_up, down: m._set_joyp_down, left: m._set_joyp_left, right: m._set_joyp_right,
       a: m._set_joyp_A, b: m._set_joyp_B, start: m._set_joyp_start, select: m._set_joyp_select,
     };
-    setters[button](this.e, down ? 1 : 0);
+    setters[button]?.(this.e, down ? 1 : 0);
   }
 
   private applyGain(): void {

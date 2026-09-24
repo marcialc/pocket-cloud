@@ -78,7 +78,7 @@ export class CloudRomError extends Error {
   }
 }
 
-/** A ROM can be up to 8 MiB; give slow connections time. */
+/** A ROM can be up to 32 MiB (MAX_ROM_BYTES); give slow connections time. */
 const ROM_TIMEOUT_MS = 120_000;
 
 async function romError(res: Response): Promise<CloudRomError> {

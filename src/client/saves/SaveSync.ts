@@ -1,5 +1,5 @@
 import { sha256Hex, type CloudSaveMeta } from "../../shared/api";
-import type { GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import type { Emulator } from "../emulator/Emulator";
 import type { RomInfo } from "../emulator/rom";
 import { CloudUnavailableError, fetchCloudSave, pushCloudSave, type CloudSave } from "./cloudApi";
 import { putLocalSave, type LocalGameSave } from "./localSaves";
@@ -74,7 +74,7 @@ export class SaveSync {
   private destroyed = false;
 
   constructor(
-    private readonly emulator: GameBoyEmulator,
+    private readonly emulator: Emulator,
     private readonly rom: RomInfo,
     initial: LocalGameSave | null,
     private cloudEnabled: boolean,

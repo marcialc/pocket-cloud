@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
-import type { GameBoyButton, GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import { PLATFORMS, buttonLabel, type Button, type PlatformId } from "../../shared/platforms";
+import type { Emulator } from "../emulator/Emulator";
 import { dpadDirections, type Direction } from "./dpad";
 
-type Props = { emulator: GameBoyEmulator | null; haptics: boolean };
+type Props = { emulator: Emulator | null; platform: PlatformId; haptics: boolean };
 
 function buzz(on: boolean) {
   if (on) navigator.vibrate?.(8);
@@ -13,7 +14,22 @@ function buzz(on: boolean) {
  * screens). Every control tracks its own pointer, so presses combine
  * (multi-touch): hold a direction and tap A at the same time.
  */
-export function TouchControls({ emulator, haptics }: Props) {
+export function TouchControls({ emulator, platform, haptics }: Props) {
+  const buttons = PLATFORMS[platform].buttons;
+  const face = (["y", "x", "b", "a", "c"] as const).filter((b) => buttons.includes(b));
+  const shoulders = (["l", "l2", "r2", "r"] as const).filter((b) => buttons.includes(b));
+  const menu = (["select", "start"] as const).filter((b) => buttons.includes(b));
+  const layout = buttons.includes("x") ? " diamond" : buttons.includes("c") ? " trio" : "";
+  const touchButton = (button: Button, className: string) => (
+    <TouchButton
+      key={button}
+      emulator={emulator}
+      haptics={haptics}
+      button={button}
+      label={buttonLabel(platform, button).toUpperCase()}
+      className={className}
+    />
+  );
   const held = useRef(new Set<Direction>());
   const [dirs, setDirs] = useState<Set<Direction>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -55,7 +71,8 @@ export function TouchControls({ emulator, haptics }: Props) {
   const releaseDpad = () => setDirections(new Set());
 
   return (
-    <div ref={root} className="touch-controls" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={root} className={`touch-controls${shoulders.length ? " has-shoulders" : ""}`} onContextMenu={(e) => e.preventDefault()}>
+      {shoulders.length > 0 && <div className="shoulder-buttons">{shoulders.map((b) => touchButton(b, `shoulder ${b}`))}</div>}
       <div
         className="dpad"
         onPointerDown={onDpad}
@@ -71,14 +88,8 @@ export function TouchControls({ emulator, haptics }: Props) {
         ))}
         <span className="dpad-hub" aria-hidden />
       </div>
-      <div className="face-buttons">
-        <TouchButton emulator={emulator} haptics={haptics} button="b" label="B" className="round b" />
-        <TouchButton emulator={emulator} haptics={haptics} button="a" label="A" className="round a" />
-      </div>
-      <div className="menu-buttons">
-        <TouchButton emulator={emulator} haptics={haptics} button="select" label="SELECT" className="pill" />
-        <TouchButton emulator={emulator} haptics={haptics} button="start" label="START" className="pill" />
-      </div>
+      <div className={`face-buttons${layout}`}>{face.map((b) => touchButton(b, `round ${b}`))}</div>
+      <div className="menu-buttons">{menu.map((b) => touchButton(b, "pill"))}</div>
       <div className="grille" aria-hidden>
         <span />
         <span />
@@ -98,9 +109,9 @@ function TouchButton({
   label,
   className,
 }: {
-  emulator: GameBoyEmulator | null;
+  emulator: Emulator | null;
   haptics: boolean;
-  button: GameBoyButton;
+  button: Button;
   label: string;
   className: string;
 }) {

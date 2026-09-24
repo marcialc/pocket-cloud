@@ -1,5 +1,5 @@
 import { EMPTY_SHELF, sanitizeShelf, type Shelf } from "../shared/shelf";
-import { DEFAULT_KEY_BINDINGS, sanitizeBindings, type KeyBindings } from "./emulator/keyBindings";
+import { DEFAULT_KEY_BINDINGS, customPlatformBindings, sanitizeAllBindings, type AllKeyBindings } from "./emulator/keyBindings";
 
 /** Small per-device UI preferences (localStorage). */
 export type Preferences = {
@@ -12,7 +12,8 @@ export type Preferences = {
   rememberRom: boolean;
   volume: number;
   muted: boolean;
-  keyBindings: KeyBindings;
+  /** Keyboard controls per platform. */
+  controls: AllKeyBindings;
   /** Chose "Continue without signing in" on the welcome screen; don't show it again. */
   skipSignIn: boolean;
   /** Soft clicks on menu buttons. Off by default. */
@@ -32,7 +33,7 @@ const DEFAULTS: Preferences = {
   rememberRom: true,
   volume: 0.6,
   muted: false,
-  keyBindings: DEFAULT_KEY_BINDINGS,
+  controls: DEFAULT_KEY_BINDINGS,
   skipSignIn: false,
   uiSounds: false,
   reduceMotion: false,
@@ -42,11 +43,14 @@ const DEFAULTS: Preferences = {
 
 export function loadPreferences(): Preferences {
   try {
-    const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    // `keyBindings` holds the Game Boy controls, as it did before other platforms, and stays their
+    // source of truth: an older version of the app (an open tab, a rollback) may still change them.
+    // `controls` only holds the other platforms that aren't on their defaults.
+    const { keyBindings, ...stored } = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
       ...DEFAULTS,
       ...stored,
-      keyBindings: sanitizeBindings(stored.keyBindings ?? DEFAULT_KEY_BINDINGS),
+      controls: sanitizeAllBindings({ ...stored.controls, ...(keyBindings ? { gb: keyBindings } : {}) }),
       shelf: sanitizeShelf(stored.shelf ?? EMPTY_SHELF),
     };
   } catch {
@@ -55,7 +59,8 @@ export function loadPreferences(): Preferences {
 }
 
 export function savePreferences(prefs: Preferences): void {
-  localStorage.setItem(KEY, JSON.stringify(prefs));
+  const { controls, ...rest } = prefs;
+  localStorage.setItem(KEY, JSON.stringify({ ...rest, keyBindings: controls.gb, controls: customPlatformBindings(controls) }));
 }
 
 /**

@@ -7,7 +7,7 @@ import {
   type CloudRomMeta,
   type ListRomsResponse,
 } from "../shared/api";
-import { json, methodNotAllowed } from "./http";
+import { json, methodNotAllowed, readLimited } from "./http";
 
 /**
  * Cloud ROM library for signed-in players (R2, one object per ROM):
@@ -87,7 +87,7 @@ async function putRom(
 
   if ((await countObjects(env, prefix, MAX_CLOUD_ROMS)) >= MAX_CLOUD_ROMS) return json({ error: "library_full" }, 403);
 
-  const data = await readLimited(request.body, MAX_ROM_BYTES);
+  const data = await readLimited(request, MAX_ROM_BYTES);
   if (!data) return json({ error: "payload_too_large" }, 413);
   if (data.byteLength < MIN_ROM_BYTES) return json({ error: "invalid_rom_size" }, 400);
   if ((await sha256Hex(data)) !== romHash) return json({ error: "rom_hash_mismatch" }, 400);
@@ -109,31 +109,6 @@ async function putRom(
     return json({ error: "removed" }, 409);
   }
   return json({ rom: toMeta(prefix, object) });
-}
-
-/** Reads the body, giving up (null) as soon as it passes `max` bytes, with or without Content-Length. */
-async function readLimited(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
-  if (!body) return new Uint8Array(0);
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
 }
 
 async function countObjects(env: Env, prefix: string, limit: number): Promise<number> {
