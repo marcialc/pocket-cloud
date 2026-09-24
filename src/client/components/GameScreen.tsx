@@ -20,6 +20,7 @@ import { FriendsPanel } from "./FriendsPanel";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
+import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { describeStatus, SyncBadge } from "./SyncBadge";
 import { TouchControls } from "./TouchControls";
 
@@ -480,6 +481,10 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   <div className="sheet-row">
                     <label htmlFor="menu-volume">Volume</label>
                     <VolumeSlider prefs={prefs} onPrefs={onPrefs} id="menu-volume" />
+                  </div>
+                  <div className="sheet-row">
+                    <label htmlFor="menu-screen-size">Screen size</label>
+                    <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} id="menu-screen-size" />
                   </div>
                   <label className="sheet-row">
                     Vibrate on press

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
-import { MIN_SCREEN_SIZE, type Preferences } from "../preferences";
+import type { Preferences } from "../preferences";
 import { authErrorMessage, fetchAccount } from "../saves/authApi";
 import { deleteCloudSave, fetchCloudSave, listCloudSaves } from "../saves/cloudApi";
 import { getPlayerKey, isValidPlayerKey, setPlayerKey } from "../saves/identity";
@@ -9,6 +9,7 @@ import type { SyncStatus } from "../saves/SaveSync";
 import { backupName, downloadBytes } from "./download";
 import { formatWhen } from "./format";
 import { Icon } from "./icons";
+import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { SidePanel } from "./SidePanel";
 import { SignInForm } from "./SignInForm";
 import { Badge, describeStatus } from "./SyncBadge";
@@ -227,16 +228,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
               <strong>Screen size</strong>
               <small>How much of the window the game screen fills.</small>
             </span>
-            <input
-              className="volume"
-              type="range"
-              min={MIN_SCREEN_SIZE}
-              max={1}
-              step={0.05}
-              value={prefs.screenSize}
-              onChange={(e) => onPrefs({ screenSize: Number(e.target.value) })}
-              aria-valuetext={`${Math.round(prefs.screenSize * 100)} percent`}
-            />
+            <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} />
           </label>
           <Setting
             title="UI sounds"
