@@ -1,0 +1,40 @@
+Fix a hang after a CGB speed switch.
+
+The timer, DMA and serial sync loops count delta_ticks (unsigned) down by
+cpu_tick. A timer overflow scheduled in double speed leaves TIMER.sync_ticks
+2 ticks off the 4-tick grid; after switching back to normal speed the delta
+is then 2 more than a multiple of 4, steps past zero and wraps to ~2^64,
+so the loop never ends. Pokémon Crystal (Clear) hits this when it switches
+speed on map transitions. Clamp the last step so the loop always ends at 0.
+
+diff --git a/src/emulator.c b/src/emulator.c
+index 4edfb80..bd4e455 100644
+--- a/src/emulator.c
++++ b/src/emulator.c
+@@ -2076,7 +2076,7 @@ static void timer_synchronize(Emulator* e) {
+ 
+     if (TIMER.on) {
+       Ticks cpu_tick = e->state.cpu_tick;
+-      for (; delta_ticks > 0; delta_ticks -= cpu_tick) {
++      for (; delta_ticks > 0; delta_ticks -= MIN(cpu_tick, delta_ticks)) {
+         if (TIMER.tima_state == TIMA_STATE_OVERFLOW) {
+           INTR.if_ |= (INTR.new_if & IF_TIMER);
+           TIMER.tima = TIMER.tma;
+@@ -3982,7 +3982,7 @@ static void dma_synchronize(Emulator* e) {
+       DMA.sync_ticks = TICKS;
+ 
+       Ticks cpu_tick = e->state.cpu_tick;
+-      for (; delta_ticks > 0; delta_ticks -= cpu_tick) {
++      for (; delta_ticks > 0; delta_ticks -= MIN(cpu_tick, delta_ticks)) {
+         if (DMA.tick_count < DMA_DELAY_TICKS) {
+           DMA.tick_count += CPU_TICK;
+           if (DMA.tick_count >= DMA_DELAY_TICKS) {
+@@ -4054,7 +4054,7 @@ static void serial_synchronize(Emulator* e) {
+     if (UNLIKELY(SERIAL.transferring &&
+                  SERIAL.clock == SERIAL_CLOCK_INTERNAL)) {
+       Ticks cpu_tick = e->state.cpu_tick;
+-      for (; delta_ticks > 0; delta_ticks -= cpu_tick) {
++      for (; delta_ticks > 0; delta_ticks -= MIN(cpu_tick, delta_ticks)) {
+         SERIAL.tick_count += cpu_tick;
+         if (VALUE_WRAPPED(SERIAL.tick_count, SERIAL_TICKS)) {
+           /* Since we're never connected to another device, always shift in
