@@ -1,35 +1,132 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "pocket-cloud",
-  "main": "src/worker/index.ts",
-  "compatibility_date": "2026-08-15",
-  "observability": { "enabled": true },
-  "routes": [{ "pattern": "pocketcloud.app", "custom_domain": true }],
-  "assets": {
-    // The React app (built by Vite) is served as static assets. Only /api/*
-    // reaches the Worker; everything else falls back to index.html.
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  },
-  "durable_objects": {
-    "bindings": [
-      { "name": "PLAYER_SAVE", "class_name": "PlayerSaveDO" },
-      { "name": "AUTH", "class_name": "AuthDO" },
-      { "name": "SOCIAL", "class_name": "SocialDO" }
-    ]
-  },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["PlayerSaveDO"] },
-    { "tag": "v2", "new_sqlite_classes": ["AuthDO"] },
-    { "tag": "v3", "new_sqlite_classes": ["SocialDO"] }
-  ],
-  // Signed-in players' ROM library, one object per ROM: roms/<playerId>/<romHash>.
-  //   pnpm wrangler r2 bucket create pocket-cloud-roms   (once, before the first deploy)
-  "r2_buckets": [{ "binding": "ROMS", "bucket_name": "pocket-cloud-roms" }],
-  // Sign-in codes are sent from login@pocketcloud.app (Cloudflare Email Service).
-  "send_email": [{ "name": "EMAIL" }],
-  // Per-IP limit on /api/auth/request and /verify (per-email limits live in AuthDO).
-  "ratelimits": [{ "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }]
-  // Secret (not in this file): SESSION_SECRET, at least 32 characters.
-  //   pnpm wrangler secret put SESSION_SECRET
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "pocket-cloud",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2026-08-15",
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{
+			"pattern": "pocketcloud.app",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		// The React app (built by Vite) is served as static assets. Only /api/*
+		// reaches the Worker; everything else falls back to index.html.
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "PLAYER_SAVE",
+				"class_name": "PlayerSaveDO"
+			},
+			{
+				"name": "AUTH",
+				"class_name": "AuthDO"
+			},
+			{
+				"name": "SOCIAL",
+				"class_name": "SocialDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"PlayerSaveDO"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"AuthDO"
+			]
+		},
+		{
+			"tag": "v3",
+			"new_sqlite_classes": [
+				"SocialDO"
+			]
+		}
+	],
+	// Signed-in players' ROM library, one object per ROM: roms/<playerId>/<romHash>.
+	//   pnpm wrangler r2 bucket create pocket-cloud-roms   (once, before the first deploy)
+	"r2_buckets": [
+		{
+			"binding": "ROMS",
+			"bucket_name": "pocket-cloud-roms"
+		},
+		{
+			"bucket_name": "pocket-cloud-roms-preview",
+			"binding": "pocket_cloud_roms_preview"
+		}
+	],
+	// Sign-in codes are sent from login@pocketcloud.app (Cloudflare Email Service).
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	// Per-IP limit on /api/auth/request and /verify (per-email limits live in AuthDO).
+	"ratelimits": [
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		}
+	],
+	// Secret (not in this file): SESSION_SECRET, at least 32 characters.
+	//   pnpm wrangler secret put SESSION_SECRET
+	// Worker Previews (branch/PR builds run `wrangler preview`). Each Preview gets
+	// its own Durable Objects; ROMs and rate limits are kept away from production.
+	//   pnpm wrangler r2 bucket create pocket-cloud-roms-preview   (once)
+	"previews": {
+		"durable_objects": {
+			"bindings": [
+				{
+					"name": "PLAYER_SAVE",
+					"class_name": "PlayerSaveDO"
+				},
+				{
+					"name": "AUTH",
+					"class_name": "AuthDO"
+				},
+				{
+					"name": "SOCIAL",
+					"class_name": "SocialDO"
+				}
+			]
+		},
+		"r2_buckets": [
+			{
+				"binding": "ROMS",
+				"bucket_name": "pocket-cloud-roms-preview"
+			}
+		],
+		"send_email": [
+			{
+				"name": "EMAIL"
+			}
+		],
+		"ratelimits": [
+			{
+				"name": "AUTH_LIMITER",
+				"namespace_id": "1002",
+				"simple": {
+					"limit": 10,
+					"period": 60
+				}
+			}
+		]
+	}
 }
