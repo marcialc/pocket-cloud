@@ -37,8 +37,6 @@ type JoypadSetter = (e: number, set: number) => void;
 export class BinjgbEmulator implements GameBoyEmulator {
   private module: BinjgbModule | null = null;
   private e = 0;
-  private romPtr = 0;
-  private romSize = 0;
   private joypadPtr = 0;
   private rom: ArrayBuffer | null = null;
   /** Wall-clock time the cartridge clock read zero (see rtc.ts); null until setClock(). */
@@ -213,17 +211,14 @@ export class BinjgbEmulator implements GameBoyEmulator {
     const m = this.module!;
     const rom = new Uint8Array(this.rom!);
     // binjgb expects the ROM buffer padded to a 32 KiB boundary.
-    this.romSize = (rom.byteLength + 0x7fff) & ~0x7fff;
-    this.romPtr = m._malloc(this.romSize);
-    m.HEAPU8.fill(0, this.romPtr, this.romPtr + this.romSize);
-    m.HEAPU8.set(rom, this.romPtr);
+    const romSize = (rom.byteLength + 0x7fff) & ~0x7fff;
+    const romPtr = m._malloc(romSize);
+    m.HEAPU8.fill(0, romPtr, romPtr + romSize);
+    m.HEAPU8.set(rom, romPtr);
     this.coreStarted = false;
-    this.e = m._emulator_new_simple(this.romPtr, this.romSize, this.audioCtx.sampleRate, AUDIO_FRAMES, CGB_COLOR_CURVE);
-    if (!this.e) {
-      m._free(this.romPtr);
-      this.romPtr = 0;
-      throw new Error("This file does not look like a valid Game Boy ROM.");
-    }
+    // The core owns romPtr from here on, even when it fails (its cleanup frees it).
+    this.e = m._emulator_new_simple(romPtr, romSize, this.audioCtx.sampleRate, AUDIO_FRAMES, CGB_COLOR_CURVE);
+    if (!this.e) throw new Error("This file does not look like a valid Game Boy ROM.");
     // Input is routed through binjgb's default joypad callback (buttons set via set_joyp_*).
     this.joypadPtr = m._joypad_new();
     m._emulator_set_default_joypad_callback(this.e, this.joypadPtr);
@@ -235,10 +230,10 @@ export class BinjgbEmulator implements GameBoyEmulator {
   private destroyCore(): void {
     const m = this.module;
     if (!m) return;
+    // emulator_delete also frees the ROM buffer (the core took ownership of it), so it isn't freed here.
     if (this.e) m._emulator_delete(this.e);
     if (this.joypadPtr) m._joypad_delete(this.joypadPtr);
-    if (this.romPtr) m._free(this.romPtr);
-    this.e = this.joypadPtr = this.romPtr = 0;
+    this.e = this.joypadPtr = 0;
   }
 
   private requireCore(): BinjgbModule {
