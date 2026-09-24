@@ -1,12 +1,13 @@
 import { HASH_PATTERN } from "./api";
 
 /**
- * How the player organizes their game library: favorite games (listed first)
- * and named groups. Games are referenced by ROM hash, so this follows the
+ * How the player organizes their game library: favorite games (listed first),
+ * named groups, and names they gave games (`names`, by ROM hash; missing when
+ * there are none). Games are referenced by ROM hash, so this follows the
  * account to other devices whether or not they have the ROM yet.
  */
 export type ShelfGroup = { id: string; name: string; roms: string[] };
-export type Shelf = { favorites: string[]; groups: ShelfGroup[] };
+export type Shelf = { favorites: string[]; groups: ShelfGroup[]; names?: Record<string, string> };
 
 export const EMPTY_SHELF: Shelf = { favorites: [], groups: [] };
 
@@ -14,6 +15,7 @@ export const EMPTY_SHELF: Shelf = { favorites: [], groups: [] };
 export const MAX_LIST_GAMES = 500;
 export const MAX_GROUPS = 50;
 export const MAX_GROUP_NAME = 40;
+export const MAX_GAME_NAME = 60;
 /**
  * The whole shelf as JSON (about 67 bytes per game in a list). The server's
  * settings request limit leaves room for this plus the controls, and the client
@@ -37,12 +39,22 @@ export function shelfBytes(shelf: Shelf): number {
   return new TextEncoder().encode(JSON.stringify(shelf)).length;
 }
 
+function isNameMap(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return (
+    entries.length <= MAX_LIST_GAMES &&
+    entries.every(([h, n]) => HASH_PATTERN.test(h) && typeof n === "string" && n.trim().length > 0 && n.length <= MAX_GAME_NAME)
+  );
+}
+
 /** Structural check for a stored shelf. */
 export function isShelf(value: unknown): value is Shelf {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const { favorites, groups } = value as Record<string, unknown>;
+  const { favorites, groups, names } = value as Record<string, unknown>;
   return (
     isHashList(favorites) &&
+    (names === undefined || isNameMap(names)) &&
     Array.isArray(groups) &&
     groups.length <= MAX_GROUPS &&
     groups.every(
@@ -113,13 +125,44 @@ export function setGameGroups(shelf: Shelf, romHash: string, ids: ReadonlySet<st
   });
 }
 
-/** The game left the library for good: drop it from favorites and groups. */
+/** The name the player gave this game, if any. */
+export function gameName(shelf: Shelf, romHash: string): string | undefined {
+  return shelf.names?.[romHash];
+}
+
+export function cleanGameName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").slice(0, MAX_GAME_NAME).trim();
+}
+
+/**
+ * Names a game; a blank name goes back to the cartridge title. Returns the shelf
+ * unchanged if the name is the same, or if the shelf is full.
+ */
+export function renameGame(shelf: Shelf, romHash: string, name: string): Shelf {
+  const clean = cleanGameName(name);
+  if ((gameName(shelf, romHash) ?? "") === clean) return shelf;
+  return checked(shelf, withNames(shelf, { ...shelf.names, [romHash]: clean }));
+}
+
+/** The shelf with these names, leaving out blank ones (and the field itself when none are left). */
+function withNames(shelf: Shelf, names: Record<string, string>): Shelf {
+  const { names: _previous, ...rest } = shelf;
+  const kept = Object.entries(names).filter(([, n]) => n.length > 0);
+  return kept.length > 0 ? { ...rest, names: Object.fromEntries(kept) } : rest;
+}
+
+/** The game left the library for good: drop it from favorites and groups, and forget its name. */
 export function forgetGame(shelf: Shelf, romHash: string): Shelf {
-  if (!isFavorite(shelf, romHash) && !shelf.groups.some((g) => g.roms.includes(romHash))) return shelf;
-  return {
-    favorites: shelf.favorites.filter((h) => h !== romHash),
-    groups: shelf.groups.map((g) => ({ ...g, roms: g.roms.filter((h) => h !== romHash) })),
-  };
+  if (!isFavorite(shelf, romHash) && !shelf.groups.some((g) => g.roms.includes(romHash)) && gameName(shelf, romHash) === undefined) {
+    return shelf;
+  }
+  return withNames(
+    {
+      favorites: shelf.favorites.filter((h) => h !== romHash),
+      groups: shelf.groups.map((g) => ({ ...g, roms: g.roms.filter((h) => h !== romHash) })),
+    },
+    { ...shelf.names, [romHash]: "" },
+  );
 }
 
 export function sameShelf(a: Shelf, b: Shelf): boolean {

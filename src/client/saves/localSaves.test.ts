@@ -10,7 +10,8 @@ import {
   listRoms,
   putLocalSave,
   putRom,
-  renameRom,
+  forgetLegacyNames,
+  legacyNames,
   touchRom,
   type LocalGameSave,
   type StoredRom,
@@ -95,15 +96,17 @@ describe("IndexedDB saves", () => {
     expect(list[0]!.lastPlayedAt).toBe(9);
   });
 
-  it("renames a library entry and resets it with a blank name", async () => {
+  it("lists names given before they moved to the shelf, and forgets them once moved", async () => {
     const base: StoredRom = { romHash: "1", fileName: "a.gbc", title: "PM_CRYSTAL", data: new ArrayBuffer(4), addedAt: 1, lastPlayedAt: 1 };
-    await putRom(base);
-    await renameRom("1", "  Complete Crystal  ");
-    expect((await listRoms())[0]!.title).toBe("Complete Crystal");
-    expect((await getRom("1"))!.title).toBe("PM_CRYSTAL");
+    await putRom({ ...base, customName: "Complete Crystal" });
+    await putRom({ ...base, romHash: "2" });
+    expect(await legacyNames()).toEqual({ "1": "Complete Crystal" });
+    // The library shows the cartridge title; the shelf supplies names now.
+    expect((await listRoms()).map((r) => r.title)).toEqual(["PM_CRYSTAL", "PM_CRYSTAL"]);
 
-    await renameRom("1", "   ");
-    expect((await listRoms())[0]!.title).toBe("PM_CRYSTAL");
+    await forgetLegacyNames(["1", "2"]);
+    expect(await legacyNames()).toEqual({});
     expect(await getRom("1")).not.toHaveProperty("customName");
+    expect((await getRom("1"))!.title).toBe("PM_CRYSTAL");
   });
 });

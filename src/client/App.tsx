@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ListRomsResponse } from "../shared/api";
-import { EMPTY_SHELF, forgetGame } from "../shared/shelf";
+import { EMPTY_SHELF, forgetGame, gameName, renameGame, type Shelf } from "../shared/shelf";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { FriendsPanel } from "./components/FriendsPanel";
@@ -22,12 +22,13 @@ import {
   clearCloudSyncState,
   deleteLocalSave,
   deleteRom,
+  forgetLegacyNames,
   getLocalSave,
   getRom,
+  legacyNames,
   listRoms,
   putLocalSave,
   putRom,
-  renameRom,
   touchRom,
   type LocalGameSave,
   type RomSummary,
@@ -129,7 +130,8 @@ export function App() {
   const offerKeepGames =
     cloudLibrary && prefs.cloudRoms === "ask" && cloud && library ? { missing: missingFromAccount(library, cloud).length } : null;
 
-  const shelf = useMemo(() => (library ? mergeLibrary(library, cloudRoms) : null), [library, cloudRoms]);
+  const names = prefs.shelf.names;
+  const shelf = useMemo(() => (library ? mergeLibrary(library, cloudRoms, names) : null), [library, cloudRoms, names]);
 
   useEffect(() => {
     fetchAccount().then((email) => {
@@ -193,18 +195,52 @@ export function App() {
     };
   }, [account, storePrefs]);
 
+  /**
+   * Game names used to be kept with the ROM in this browser only. Once `shelf` is the one to use, move
+   * them into it (a name it already has wins), so they follow the account and show on the game screen.
+   */
+  const adoptLegacyNames = useCallback(
+    async (shelf: Shelf) => {
+      const legacy = await legacyNames();
+      let next = shelf;
+      const moved: string[] = [];
+      for (const [romHash, name] of Object.entries(legacy)) {
+        if (gameName(next, romHash) === undefined) {
+          const named = renameGame(next, romHash, name);
+          // No room: it stays here and is tried again next time.
+          if (named === next) continue;
+          next = named;
+        }
+        moved.push(romHash);
+      }
+      if (next !== shelf) updatePrefs({ shelf: next });
+      await forgetLegacyNames(moved);
+    },
+    [updatePrefs],
+  );
+  const warnLegacyNames = (err: unknown) => console.warn("Could not move game names to the library shelf", err);
+
   // Signed in: use the account's favorites and groups (or give it this browser's if it has none yet).
   useEffect(() => {
     if (!account) return;
     let stale = false;
     syncShelf(account, loadPreferences().shelf).then(
-      (shelf) => !stale && shelf && storePrefs({ shelf }),
+      (shelf) => {
+        if (stale) return;
+        if (shelf) storePrefs({ shelf });
+        adoptLegacyNames(shelf ?? loadPreferences().shelf).catch(warnLegacyNames);
+      },
       (err) => console.warn("Could not load the library groups from the account", err),
     );
     return () => {
       stale = true;
     };
-  }, [account, storePrefs]);
+  }, [account, storePrefs, adoptLegacyNames]);
+
+  // Signed out: this browser's shelf is the one.
+  useEffect(() => {
+    if (account === null) adoptLegacyNames(loadPreferences().shelf).catch(warnLegacyNames);
+  }, [account, adoptLegacyNames]);
 
   const openRom = useCallback(
     /** `picked`: the player chose this file just now (not from the library). */
@@ -353,14 +389,6 @@ export function App() {
     [refreshLibrary, refreshCloudRoms, cloudRoms, updatePrefs],
   );
 
-  const renameStored = useCallback(
-    async (romHash: string, name: string) => {
-      await renameRom(romHash, name);
-      refreshLibrary();
-    },
-    [refreshLibrary],
-  );
-
   switch (stage.name) {
     case "pick":
     case "loading":
@@ -390,7 +418,6 @@ export function App() {
             backingUp={backingUp}
             onPlayStored={openStored}
             onRemoveStored={removeStored}
-            onRenameStored={renameStored}
             account={account ?? null}
             onAccount={() => setPanel("account")}
             onControls={() => setPanel("controls")}
@@ -434,7 +461,7 @@ export function App() {
     case "choose":
       return (
         <SaveChoice
-          title={displayName(stage.rom)}
+          title={gameName(prefs.shelf, stage.rom.romHash) ?? displayName(stage.rom)}
           local={stage.plan.local!}
           cloud={stage.plan.cloud!}
           recommended={stage.plan.decision.use === "ask" ? stage.plan.decision.recommended : "cloud"}

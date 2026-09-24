@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_SHELF,
+  MAX_GAME_NAME,
   MAX_GROUPS,
   MAX_SHELF_BYTES,
   addGroup,
   forgetGame,
+  gameName,
   isShelf,
   removeGroup,
+  renameGame,
   renameGroup,
   sanitizeShelf,
   setGameGroups,
@@ -57,8 +60,28 @@ describe("library shelf", () => {
     expect(forgetGame(other, A)).toBe(other);
   });
 
+  it("names games, and a blank name goes back to the cartridge title", () => {
+    const named = renameGame(EMPTY_SHELF, A, "  Pokemon   Crystal Clear ");
+    expect(gameName(named, A)).toBe("Pokemon Crystal Clear");
+    expect(gameName(named, B)).toBeUndefined();
+    expect(renameGame(named, A, "Pokemon Crystal Clear")).toBe(named);
+    expect(gameName(renameGame(named, A, "x".repeat(99)), A)).toHaveLength(MAX_GAME_NAME);
+    const cleared = renameGame(named, A, "   ");
+    expect(cleared).toEqual(EMPTY_SHELF);
+    expect(cleared).not.toHaveProperty("names");
+    // Favorites and groups keep a game's name.
+    expect(gameName(toggleFavorite(named, A), A)).toBe("Pokemon Crystal Clear");
+  });
+
+  it("forgets a removed game's name", () => {
+    const shelf = renameGame(renameGame(EMPTY_SHELF, A, "One"), B, "Two");
+    expect(forgetGame(shelf, A)).toEqual({ favorites: [], groups: [], names: { [B]: "Two" } });
+    expect(forgetGame(forgetGame(shelf, A), B)).toEqual(EMPTY_SHELF);
+  });
+
   it("validates stored shelves", () => {
     expect(isShelf({ favorites: [A], groups: [{ id: "g1", name: "One", roms: [B] }] })).toBe(true);
+    expect(isShelf({ favorites: [], groups: [], names: { [A]: "Crystal Clear" } })).toBe(true);
     for (const bad of [
       null,
       [],
@@ -66,6 +89,10 @@ describe("library shelf", () => {
       { favorites: ["nope"], groups: [] },
       { favorites: [], groups: [{ id: "G!", name: "x", roms: [] }] },
       { favorites: [], groups: [{ id: "g1", name: " ", roms: [] }] },
+      { favorites: [], groups: [], names: [] },
+      { favorites: [], groups: [], names: { nope: "x" } },
+      { favorites: [], groups: [], names: { [A]: " " } },
+      { favorites: [], groups: [], names: { [A]: "x".repeat(MAX_GAME_NAME + 1) } },
       { favorites: [], groups: [{ id: "g1", name: "x".repeat(41), roms: [] }] },
       { favorites: [], groups: [{ id: "g1", name: "x", roms: [42] }] },
     ]) {

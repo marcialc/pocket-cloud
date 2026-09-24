@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
+import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
 import { createEmulator } from "../emulator/createEmulator";
 import type { Emulator } from "../emulator/Emulator";
@@ -53,7 +54,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [dim, setDim] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
-  const title = displayName(session.rom);
+  const title = gameName(prefs.shelf, session.rom.romHash) ?? displayName(session.rom);
   const platform = PLATFORMS[session.rom.platform];
   const { width: LCD_W, height: LCD_H } = platform.screen;
   const bindings = prefs.controls[platform.controls];

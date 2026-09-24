@@ -2,10 +2,14 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
 import { enabledExtensions } from "../../shared/platforms";
 import {
+  MAX_GAME_NAME,
   MAX_GROUP_NAME,
   MAX_GROUPS,
   addGroup,
+  cleanGameName,
+  gameName,
   removeGroup,
+  renameGame,
   renameGroup,
   setGameGroups,
   toggleFavorite,
@@ -39,7 +43,6 @@ type Props = {
   onOpen: (data: ArrayBuffer, fileName: string) => void;
   onPlayStored: (romHash: string) => void;
   onRemoveStored: (romHash: string, alsoSave: boolean, alsoCloud: boolean) => void;
-  onRenameStored: (romHash: string, name: string) => void;
   /** Signed-in email, or null. */
   account: string | null;
   onAccount: () => void;
@@ -74,7 +77,6 @@ export function RomPicker({
   onOpen,
   onPlayStored,
   onRemoveStored,
-  onRenameStored,
   account,
   onAccount,
   onControls,
@@ -496,7 +498,8 @@ export function RomPicker({
           rom={renaming}
           onCancel={() => setRenaming(null)}
           onRename={(name) => {
-            onRenameStored(renaming.romHash, name);
+            // Unchanged isn't "full": only a real change goes through setShelf.
+            if (cleanGameName(name) !== (gameName(shelf, renaming.romHash) ?? "")) setShelf(renameGame(shelf, renaming.romHash, name));
             setRenaming(null);
           }}
         />
@@ -651,11 +654,11 @@ function RenameDialog({
         }}
       >
         <h2 id="rename-title">Rename game</h2>
-        <p className="muted">Only changes the name in your list. Saves are not affected. Leave it blank to use the cartridge name.</p>
+        <p className="muted">Only changes the name shown, in your list and while playing. Saves are not affected. Leave it blank to use the cartridge name.</p>
         <input
           className="field"
           value={name}
-          maxLength={60}
+          maxLength={MAX_GAME_NAME}
           autoFocus
           onFocus={(e) => e.target.select()}
           onChange={(e) => setName(e.target.value)}
