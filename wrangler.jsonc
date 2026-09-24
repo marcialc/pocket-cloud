@@ -3,6 +3,8 @@
 	"name": "pocket-cloud",
 	"main": "src/worker/index.ts",
 	"compatibility_date": "2026-08-15",
+	// Keep *-pocket-cloud.<account>.workers.dev Preview URLs on; deploys reset them when unset.
+	"preview_urls": true,
 	"observability": {
 		"enabled": true
 	},
