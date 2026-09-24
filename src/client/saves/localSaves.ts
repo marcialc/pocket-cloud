@@ -4,6 +4,8 @@
  * in the browser.
  */
 
+import { sha1Hex } from "../covers";
+
 export type CloudSyncState = {
   /** Cloud revision this local save was last reconciled with. */
   revision: number;
@@ -45,6 +47,8 @@ export type StoredRom = {
    * (shared/shelf.ts). Moved there once and then removed (see legacyNames).
    */
   customName?: string;
+  /** SHA-1 of the ROM, to find its box art (client/covers.ts). Added by putRom; older entries get it on listRoms. */
+  sha1?: string;
   data: ArrayBuffer;
   addedAt: number;
   lastPlayedAt: number;
@@ -111,12 +115,19 @@ export async function clearCloudSyncState(): Promise<void> {
 
 /** Adds or updates a ROM in the library. */
 export async function putRom(rom: StoredRom): Promise<void> {
-  await request((await store(ROMS, "readwrite")).put(rom));
+  const sha1 = rom.sha1 ?? (await sha1Hex(rom.data));
+  await request((await store(ROMS, "readwrite")).put({ ...rom, sha1 }));
 }
 
 /** Library entries, most recently played first (ROM bytes not included). */
 export async function listRoms(): Promise<RomSummary[]> {
   const all: StoredRom[] = await request((await store(ROMS, "readonly")).getAll());
+  for (const [i, rom] of all.entries()) {
+    if (rom.sha1) continue;
+    all[i] = { ...rom, sha1: await sha1Hex(rom.data) };
+    // Best effort: without it the hash is just worked out again next time.
+    await addSha1(rom.romHash, all[i]!.sha1!).catch(() => {});
+  }
   return all
     .map(({ data, ...rest }) => ({
       ...rest,
@@ -125,6 +136,13 @@ export async function listRoms(): Promise<RomSummary[]> {
       addedAt: rest.addedAt ?? rest.lastPlayedAt,
     }))
     .sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
+}
+
+/** Stores a ROM's SHA-1, unless it was removed meanwhile. */
+async function addSha1(romHash: string, sha1: string): Promise<void> {
+  const roms = await store(ROMS, "readwrite");
+  const current: StoredRom | undefined = await request(roms.get(romHash));
+  if (current && !current.sha1) await request(roms.put({ ...current, sha1 }));
 }
 
 export async function getRom(romHash: string): Promise<StoredRom | null> {

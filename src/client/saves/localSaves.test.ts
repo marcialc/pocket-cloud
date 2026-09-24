@@ -87,6 +87,31 @@ describe("IndexedDB saves", () => {
     expect(await listRoms()).toHaveLength(2);
   });
 
+  it("keeps each ROM's SHA-1, and works it out for ROMs stored before it was kept", async () => {
+    const base: StoredRom = { romHash: "1", fileName: "a.gb", title: "A", data: new ArrayBuffer(4), addedAt: 1, lastPlayedAt: 1 };
+    await putRom(base);
+    expect((await getRom("1"))!.sha1).toBe("9069ca78e7450a285173431b3e52c5c25299e473");
+
+    // An entry from before: written straight to IndexedDB, without the hash.
+    await closeDb();
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open("pocket-cloud");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("roms", "readwrite");
+      tx.objectStore("roms").put({ ...base, romHash: "2", data: new ArrayBuffer(8) });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+
+    const list = await listRoms();
+    expect(list.find((r) => r.romHash === "2")!.sha1).toBe("05fe405753166f125559e7c9ac558654f107c7e9");
+    expect((await getRom("2"))!.sha1).toBe("05fe405753166f125559e7c9ac558654f107c7e9");
+  });
+
   it("re-adding a ROM replaces the entry instead of duplicating it", async () => {
     const base: StoredRom = { romHash: "1", fileName: "a.gb", title: "A", data: new ArrayBuffer(4), addedAt: 1, lastPlayedAt: 1 };
     await putRom(base);

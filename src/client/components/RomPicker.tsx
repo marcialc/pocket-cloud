@@ -16,6 +16,7 @@ import {
   type Shelf,
   type ShelfGroup,
 } from "../../shared/shelf";
+import { coverFor, loadCoverIndex, type CoverIndex } from "../covers";
 import type { Preferences } from "../preferences";
 import { listCloudSaves } from "../saves/cloudApi";
 import { getLocalSave, requestPersistentStorage, storageUsage } from "../saves/localSaves";
@@ -95,6 +96,7 @@ export function RomPicker({
   const [grouping, setGrouping] = useState<LibraryEntry | null>(null);
   const [groupName, setGroupName] = useState<{ group: ShelfGroup | null } | null>(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ShelfGroup | null>(null);
+  const [covers, setCovers] = useState<CoverIndex | null>(null);
 
   const shelf = prefs.shelf;
   // A change the shelf had no room for comes back as the same shelf.
@@ -122,6 +124,20 @@ export function RomPicker({
   useEffect(() => {
     storageUsage().then(setStorage, () => setStorage(null));
   }, [loadedLibrary]);
+
+  // Box art lookup, only once there are games to show.
+  const hasGames = library.length > 0;
+  useEffect(() => {
+    if (!hasGames || covers) return;
+    let live = true;
+    loadCoverIndex().then(
+      (index) => live && setCovers(index),
+      (err) => console.warn("Could not load the box art list", err),
+    );
+    return () => {
+      live = false;
+    };
+  }, [hasGames, covers]);
 
   // Per-game sync badge: compare each game's local save with the cloud list.
   useEffect(() => {
@@ -370,6 +386,7 @@ export function RomPicker({
             {shown.map((rom) => {
               const sync = syncByRom[rom.romHash];
               const favorite = favorites.has(rom.romHash);
+              const cover = covers && coverFor(covers, rom);
               return (
                 <li key={rom.romHash} className="game-card plastic">
                   <button
@@ -394,7 +411,11 @@ export function RomPicker({
                       <Ridges />
                     </span>
                     <span className="game-label">
-                      <span className="label-stripe" style={{ background: hueFor(rom.romHash) }} />
+                      {cover ? (
+                        <CoverArt key={cover} src={cover} hue={hueFor(rom.romHash)} />
+                      ) : (
+                        <span className="label-stripe" style={{ background: hueFor(rom.romHash) }} />
+                      )}
                       <span className="px game-title">{rom.title}</span>
                       <span className="game-file">{rom.onDevice ? rom.fileName : "In your account · downloads on play"}</span>
                       <span className="game-when">
@@ -580,6 +601,13 @@ function Chip({
       <span className="chip-count">{count}</span>
     </button>
   );
+}
+
+/** The game's box art, or the plain label stripe if it doesn't load. */
+function CoverArt({ src, hue }: { src: string; hue: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <span className="label-stripe" style={{ background: hue }} />;
+  return <img className="game-cover" src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
 function hueFor(romHash: string): string {
