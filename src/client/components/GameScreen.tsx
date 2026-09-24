@@ -150,7 +150,9 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   useEffect(() => sync?.setCloudEnabled(prefs.cloudSync), [sync, prefs.cloudSync]);
 
   // Fill the space (times the "Screen size" setting), rounded down to whole device pixels
-  // so the LCD's edges stay sharp, e.g. 2.5x on a 2x screen.
+  // so the LCD's edges stay sharp. On 2x+ screens the LCD can be any width (a game pixel
+  // spanning 4 or 5 device pixels isn't visible there); on 1x screens every game pixel
+  // gets the same whole number of device pixels.
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
@@ -160,7 +162,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       const chromeY = parseFloat(css.getPropertyValue("--chrome-y")) || 0;
       const w = el.clientWidth - chromeX;
       const h = el.clientHeight - chromeY;
-      const step = window.devicePixelRatio || 1;
+      const dpr = window.devicePixelRatio || 1;
+      const step = dpr >= 2 ? dpr * LCD_W : dpr;
       setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H) * prefs.screenSize * step) / step));
     };
     fit();

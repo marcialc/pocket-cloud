@@ -756,8 +756,8 @@ kbd.empty { color: var(--ink-2); }
   .badge-button { font-size: 8px; }
 
   .game-bar { padding: 0 8px; }
-  /* The screen reaches into the side padding and keeps a thin bezel, so it can be as wide as possible. */
-  .stage { --chrome-x: 8px; --chrome-y: 30px; flex: 0 1 auto; width: auto; margin: 0 -4px; height: min(56dvh, calc((100vw - 8px) * 0.9 + 30px)); }
+  /* The screen keeps a thin bezel so it can be as wide as possible, but never more than 96% of the width. */
+  .stage { --chrome-x: 8px; --chrome-y: 30px; flex: 0 1 auto; width: 96vw; align-self: center; height: min(56dvh, calc(96vw * 0.9 + 30px)); }
   .shell { padding: 0; gap: 0; background: none; box-shadow: none; border-radius: 0; }
   .shell-top, .shell-foot { display: none; }
   .bezel { padding: 8px 4px 22px; border-radius: 10px 10px 30px 10px; }
