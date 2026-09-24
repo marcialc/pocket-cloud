@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
-import type { Preferences } from "../preferences";
+import { MIN_SCREEN_SIZE, type Preferences } from "../preferences";
 import { authErrorMessage, fetchAccount } from "../saves/authApi";
 import { deleteCloudSave, fetchCloudSave, listCloudSaves } from "../saves/cloudApi";
 import { getPlayerKey, isValidPlayerKey, setPlayerKey } from "../saves/identity";
@@ -222,6 +222,22 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
               onChange={(on) => onPrefs({ cloudRoms: on ? "on" : "off" })}
             />
           )}
+          <label className="setting">
+            <span>
+              <strong>Screen size</strong>
+              <small>How much of the window the game screen fills.</small>
+            </span>
+            <input
+              className="volume"
+              type="range"
+              min={MIN_SCREEN_SIZE}
+              max={1}
+              step={0.05}
+              value={prefs.screenSize}
+              onChange={(e) => onPrefs({ screenSize: Number(e.target.value) })}
+              aria-valuetext={`${Math.round(prefs.screenSize * 100)} percent`}
+            />
+          </label>
           <Setting
             title="UI sounds"
             desc="Soft clicks when you press buttons in menus. Never during play."

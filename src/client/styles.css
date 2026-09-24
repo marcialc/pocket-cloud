@@ -571,7 +571,7 @@ kbd.empty { color: var(--ink-2); }
 .game-bar-end { display: flex; align-items: center; gap: 14px; }
 .menu-btn { display: none; }
 
-/* Chrome around the LCD, subtracted before picking the integer scale. */
+/* Chrome around the LCD, subtracted before picking the scale. */
 .stage {
   --chrome-x: 150px; --chrome-y: 178px;
   flex: 1; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center;
@@ -756,8 +756,7 @@ kbd.empty { color: var(--ink-2); }
   .badge-button { font-size: 8px; }
 
   .game-bar { padding: 0 8px; }
-  /* Phones scale in whole device pixels (see GameScreen), so the LCD can be 1.5x on a 2x screen. */
-  .stage { --chrome-x: 16px; --chrome-y: 30px; --device-px: 1; flex: 0 1 auto; height: min(56dvh, calc((100vw - 16px) * 0.9 + 30px)); }
+  .stage { --chrome-x: 16px; --chrome-y: 30px; flex: 0 1 auto; height: min(56dvh, calc((100vw - 16px) * 0.9 + 30px)); }
   .shell { padding: 0; gap: 0; background: none; box-shadow: none; border-radius: 0; }
   .shell-top, .shell-foot { display: none; }
   .bezel { padding: 8px 8px 22px; border-radius: 10px 10px 30px 10px; }
