@@ -12,7 +12,7 @@ import {
   type MyProfile,
 } from "../../shared/social";
 import { displayName } from "../emulator/rom";
-import { listRoms } from "../saves/localSaves";
+import { loadPreferences } from "../preferences";
 import {
   addFriend,
   fetchFriends,
@@ -44,14 +44,8 @@ export function FriendsPanel({ current, onClose }: Props) {
   const [friends, setFriends] = useState<FriendsResponse | null>(null);
   const [games, setGames] = useState<Load<GameLeaderboards[]>>({ state: "loading" });
   const [announce, setAnnounce] = useState("");
-  // Names the player gave games in this browser's library, by ROM hash (the boards carry the cartridge title).
-  const [names, setNames] = useState<Record<string, string>>({});
-  useEffect(() => {
-    listRoms().then(
-      (roms) => setNames(Object.fromEntries(roms.flatMap((r) => (r.customName ? [[r.romHash, r.customName]] : [])))),
-      () => {},
-    );
-  }, []);
+  // Names the player gave games in their library, by ROM hash (the boards carry the cartridge title).
+  const [names] = useState(() => loadPreferences().shelf.names ?? {});
 
   const loadProfile = useCallback(() => {
     setProfile({ state: "loading" });

@@ -41,6 +41,11 @@ describe("mergeLibrary", () => {
     // No header title stored: fall back to the file name.
     expect(merged[0]!.title).toBe("b.gb");
   });
+
+  it("shows the names the player gave games, on this device or only in the account", () => {
+    const merged = mergeLibrary([local("a", 10)], [cloud("b", 20)], { a: "Game A", b: "Game B" });
+    expect(merged.map((e) => e.title)).toEqual(["Game B", "Game A"]);
+  });
 });
 
 const stored = (romHash: string) =>

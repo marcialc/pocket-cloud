@@ -40,7 +40,10 @@ export type StoredRom = {
   fileName: string;
   /** Cartridge header title, for the library list. */
   title: string;
-  /** Name the player gave this game; shown instead of `title` when set. */
+  /**
+   * Name the player gave this game before names moved to the synced shelf
+   * (shared/shelf.ts). Moved there once and then removed (see legacyNames).
+   */
   customName?: string;
   data: ArrayBuffer;
   addedAt: number;
@@ -118,7 +121,7 @@ export async function listRoms(): Promise<RomSummary[]> {
     .map(({ data, ...rest }) => ({
       ...rest,
       size: data.byteLength,
-      title: rest.customName || rest.title || rest.fileName,
+      title: rest.title || rest.fileName,
       addedAt: rest.addedAt ?? rest.lastPlayedAt,
     }))
     .sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
@@ -133,13 +136,20 @@ export async function touchRom(romHash: string): Promise<void> {
   if (rom) await putRom({ ...rom, lastPlayedAt: Date.now() });
 }
 
-/** Renames a library entry. A blank name goes back to the cartridge title. */
-export async function renameRom(romHash: string, name: string): Promise<void> {
-  const rom = await getRom(romHash);
-  if (!rom) return;
-  const { customName: _previous, ...rest } = rom;
-  const trimmed = name.trim();
-  await putRom(trimmed ? { ...rest, customName: trimmed } : rest);
+/** Names given in this browser before they moved to the shelf, by ROM hash. */
+export async function legacyNames(): Promise<Record<string, string>> {
+  const all: StoredRom[] = await request((await store(ROMS, "readonly")).getAll());
+  return Object.fromEntries(all.flatMap((r) => (r.customName ? [[r.romHash, r.customName]] : [])));
+}
+
+/** The shelf has taken these games' names over. */
+export async function forgetLegacyNames(romHashes: string[]): Promise<void> {
+  for (const romHash of romHashes) {
+    const rom = await getRom(romHash);
+    if (!rom?.customName) continue;
+    const { customName: _moved, ...rest } = rom;
+    await putRom(rest);
+  }
 }
 
 export async function deleteRom(romHash: string): Promise<void> {

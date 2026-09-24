@@ -5,10 +5,11 @@ import { getRom, listRoms, type RomSummary } from "./localSaves";
 /**
  * The start screen's game list: this browser's ROMs plus, when signed in, the
  * games kept in the account (which a new device downloads on first play).
+ * `names` (the shelf's, by ROM hash) replace the cartridge titles.
  */
 export type LibraryEntry = RomSummary & { onDevice: boolean; inCloud: boolean };
 
-export function mergeLibrary(local: RomSummary[], cloud: CloudRomMeta[] | null): LibraryEntry[] {
+export function mergeLibrary(local: RomSummary[], cloud: CloudRomMeta[] | null, names: Record<string, string> = {}): LibraryEntry[] {
   const inCloud = new Set(cloud?.map((r) => r.romHash));
   const onDevice = new Set(local.map((r) => r.romHash));
   const entries: LibraryEntry[] = local.map((r) => ({ ...r, onDevice: true, inCloud: inCloud.has(r.romHash) }));
@@ -26,7 +27,9 @@ export function mergeLibrary(local: RomSummary[], cloud: CloudRomMeta[] | null):
       inCloud: true,
     });
   }
-  return entries.sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
+  return entries
+    .map((e) => (names[e.romHash] ? { ...e, title: names[e.romHash]! } : e))
+    .sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
 }
 
 /** Games in this browser that aren't in the account and weren't removed from it. */
