@@ -659,6 +659,8 @@ kbd.empty { color: var(--ink-2); }
 .touch-controls { display: none; }
 .touch-controls, .touch-controls * { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .dpad { position: relative; width: min(150px, 38vw); aspect-ratio: 1; }
+/* Bigger hit area than the drawn pad, so a thumb landing just off it still steers. */
+.dpad::before { content: ""; position: absolute; inset: -20px -24px -12px; }
 .dpad-well { position: absolute; inset: 0; border-radius: 50%; background: #c3bdaf; box-shadow: inset 0 3px 7px rgba(0, 0, 0, 0.22); }
 .dpad-arm, .dpad-hub { position: absolute; width: 33.34%; height: 33.34%; background: #3a3440; }
 .dpad-arm { box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.14), 0 4px 0 #1f1b24; }

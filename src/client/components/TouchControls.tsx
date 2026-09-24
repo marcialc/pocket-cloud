@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { GameBoyButton, GameBoyEmulator } from "../emulator/GameBoyEmulator";
+import { dpadDirections, type Direction } from "./dpad";
 
 type Props = { emulator: GameBoyEmulator | null; haptics: boolean };
-type Direction = "up" | "down" | "left" | "right";
-const DEADZONE = 0.25;
 
 function buzz(on: boolean) {
   if (on) navigator.vibrate?.(8);
@@ -47,14 +46,9 @@ export function TouchControls({ emulator, haptics }: Props) {
   const onDpad = (e: PointerEvent<HTMLDivElement>) => {
     if (e.type === "pointerdown") e.currentTarget.setPointerCapture(e.pointerId);
     if (e.type !== "pointerdown" && !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    // The box is the drawn pad; its invisible hit area (CSS ::before) reaches further.
     const r = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * 2 - 1;
-    const y = ((e.clientY - r.top) / r.height) * 2 - 1;
-    const next = new Set<Direction>();
-    // Diagonals allowed when both axes are clearly pressed.
-    if (Math.abs(x) > DEADZONE && Math.abs(x) > Math.abs(y) * 0.5) next.add(x < 0 ? "left" : "right");
-    if (Math.abs(y) > DEADZONE && Math.abs(y) > Math.abs(x) * 0.5) next.add(y < 0 ? "up" : "down");
-    setDirections(next);
+    setDirections(dpadDirections(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2), held.current));
     e.preventDefault();
   };
 
