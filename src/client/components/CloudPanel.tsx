@@ -249,6 +249,11 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
           ? "Your games and saves are private to your account."
           : "Only save files sync. The ROM never leaves your device."}
       </p>
+      <p className="fine">
+        <a className="link" href="/licenses" target="_blank" rel="noopener">
+          Open-source licenses
+        </a>
+      </p>
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>

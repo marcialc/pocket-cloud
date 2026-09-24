@@ -1,4 +1,4 @@
-import type { GameBoyEmulator } from "./GameBoyEmulator";
+import type { Emulator } from "./Emulator";
 import { keyMap, type KeyBindings } from "./keyBindings";
 
 const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "password", "url", "tel", "number"]);
@@ -15,7 +15,7 @@ function isTextEntry(target: EventTarget | null): boolean {
 }
 
 /** Wires keyboard input to the emulator using the given bindings. Returns a cleanup function. */
-export function bindKeyboard(emulator: GameBoyEmulator, bindings: KeyBindings, target: Window = window): () => void {
+export function bindKeyboard(emulator: Emulator, bindings: KeyBindings, target: Window = window): () => void {
   const map = keyMap(bindings);
   const held = new Set<string>();
 

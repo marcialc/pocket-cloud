@@ -4,6 +4,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   isKeyBindings,
+  isPlatformKeyBindings,
   sha256Hex,
   type CloudSaveResponse,
   type ListSavesResponse,
@@ -16,7 +17,7 @@ import { isShelf } from "../shared/shelf";
 import { handleAuth } from "./auth/routes";
 import { clearSessionCookie } from "./auth/session";
 import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
-import { isCrossSite, json, methodNotAllowed } from "./http";
+import { isCrossSite, json, methodNotAllowed, readLimited } from "./http";
 import { authenticate } from "./identity";
 import { handleRoms } from "./roms";
 import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
@@ -153,32 +154,45 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 }
 
 const KEY_BINDINGS = "key_bindings";
+const PLATFORM_KEY_BINDINGS = "platform_key_bindings";
 const SHELF = "shelf";
 const MAX_SETTINGS_BYTES = 64 * 1024;
 
 async function handleSettings(request: Request, stub: DurableObjectStub<PlayerSaveDO>): Promise<Response> {
   switch (request.method) {
     case "GET": {
-      const [keyBindings, shelf] = await Promise.all([stub.getSetting(KEY_BINDINGS), stub.getSetting(SHELF)]);
+      const [keyBindings, platformKeyBindings, shelf] = await Promise.all([
+        stub.getSetting(KEY_BINDINGS),
+        stub.getSetting(PLATFORM_KEY_BINDINGS),
+        stub.getSetting(SHELF),
+      ]);
       return json({
         keyBindings: keyBindings ? JSON.parse(keyBindings) : null,
+        platformKeyBindings: platformKeyBindings ? JSON.parse(platformKeyBindings) : null,
         shelf: shelf ? JSON.parse(shelf) : null,
       } satisfies SettingsResponse);
     }
     case "PUT": {
       if (Number(request.headers.get("Content-Length") ?? 0) > MAX_SETTINGS_BYTES) return json({ error: "payload_too_large" }, 400);
+      // Also caps a body sent without Content-Length (chunked).
+      const bytes = await readLimited(request, MAX_SETTINGS_BYTES);
+      if (!bytes) return json({ error: "payload_too_large" }, 400);
       let body: PutSettingsRequest;
       try {
-        body = await request.json();
+        body = JSON.parse(new TextDecoder().decode(bytes));
       } catch {
         return json({ error: "invalid_json" }, 400);
       }
-      if (typeof body !== "object" || body === null || !("keyBindings" in body || "shelf" in body)) {
+      if (typeof body !== "object" || body === null || !("keyBindings" in body || "platformKeyBindings" in body || "shelf" in body)) {
         return json({ error: "invalid_settings" }, 400);
       }
       if ("keyBindings" in body && !isKeyBindings(body.keyBindings)) return json({ error: "invalid_key_bindings" }, 400);
+      if ("platformKeyBindings" in body && !isPlatformKeyBindings(body.platformKeyBindings)) {
+        return json({ error: "invalid_key_bindings" }, 400);
+      }
       if ("shelf" in body && !isShelf(body.shelf)) return json({ error: "invalid_shelf" }, 400);
       if (body.keyBindings) await stub.putSetting(KEY_BINDINGS, JSON.stringify(body.keyBindings));
+      if (body.platformKeyBindings) await stub.putSetting(PLATFORM_KEY_BINDINGS, JSON.stringify(body.platformKeyBindings));
       if (body.shelf) await stub.putSetting(SHELF, JSON.stringify(body.shelf));
       return new Response(null, { status: 204 });
     }

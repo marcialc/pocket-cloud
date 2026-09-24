@@ -46,3 +46,10 @@ describe("Tetris watcher", () => {
     expect(scoreWatcherFor("POKEMON RED")).toBeNull();
   });
 });
+
+describe("scoreWatcherFor", () => {
+  it("only follows Game Boy games", () => {
+    expect(scoreWatcherFor("TETRIS")).not.toBeNull();
+    expect(scoreWatcherFor("nes:TETRIS")).toBeNull();
+  });
+});

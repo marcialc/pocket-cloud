@@ -484,6 +484,7 @@ kbd.empty { color: var(--ink-2); }
 .hw-round { border-radius: 50%; background: #9e2b47; box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.22), 0 4px 0 #5f1629; }
 .hw-pill { border-radius: 999px; background: #7d776b; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 2px 0 #55504a; transform: rotate(-25deg); }
 .hw-pill:active { transform: rotate(-25deg) translateY(2px); }
+.hw-shoulder { border-radius: 8px 8px 3px 3px; background: #7d776b; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 2px 0 #55504a; }
 .hw.listen { outline: 3px solid var(--accent); outline-offset: 4px; animation: ring 700ms steps(2) infinite; }
 @keyframes ring { 50% { outline-color: transparent; } }
 .hw-label { position: absolute; font: 9px var(--pixel); color: var(--ink-2); pointer-events: none; }
@@ -596,7 +597,7 @@ kbd.empty { color: var(--ink-2); }
 .power[data-on="false"] .led { background: #5a3038; box-shadow: none; }
 .lcd { position: relative; line-height: 0; box-shadow: 0 0 0 2px #1c2419; }
 .lcd canvas {
-  display: block; width: calc(160px * var(--scale, 3)); height: calc(144px * var(--scale, 3));
+  display: block; width: calc(var(--lcd-w, 160) * 1px * var(--scale, 3)); height: calc(var(--lcd-h, 144) * 1px * var(--scale, 3));
   image-rendering: pixelated; image-rendering: crisp-edges; background: var(--lcd-light);
 }
 .lcd-overlay {
@@ -690,6 +691,25 @@ kbd.empty { color: var(--ink-2); }
   outline: 20px solid transparent; outline-offset: 0;
 }
 .pill .touch-btn.pressed { background: #5f5a50; box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.35); transform: rotate(-25deg) translateY(2px); }
+/* Four face buttons (SNES, PlayStation) in a diamond; three (Genesis) climbing in a row. */
+.face-buttons.diamond { aspect-ratio: 1; }
+.diamond .round .touch-btn, .trio .round .touch-btn { width: min(56px, 14vw); height: min(56px, 14vw); }
+.diamond .touch-btn-wrap.x { left: 50%; top: 0; transform: translateX(-50%); }
+.diamond .touch-btn-wrap.y { left: 0; top: 30%; }
+.diamond .touch-btn-wrap.a { right: 0; top: 30%; }
+.diamond .touch-btn-wrap.b { left: 50%; top: auto; bottom: 0; transform: translateX(-50%); }
+.trio .touch-btn-wrap.a { left: 0; right: auto; top: 45%; }
+.trio .touch-btn-wrap.b { left: 50%; top: 22%; transform: translateX(-50%); }
+.trio .touch-btn-wrap.c { right: 0; top: 0; }
+/* Shoulder buttons (L/R) along the top edge. */
+.shoulder-buttons { display: flex; justify-content: space-between; gap: 12px; }
+.shoulder .touch-btn {
+  width: 76px; height: 22px; border-radius: 12px 12px 4px 4px; background: #7d776b;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 3px 0 #55504a;
+  /* Bigger hit area than the drawn button. */
+  outline: 14px solid transparent; outline-offset: 0;
+}
+.shoulder .touch-btn.pressed { background: #5f5a50; box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.35); transform: translateY(2px); }
 .grille { display: flex; gap: 10px; justify-self: end; align-self: end; }
 .grille span { width: 6px; height: 44px; border-radius: 3px; background: var(--shell-shadow); box-shadow: inset 0 2px 2px rgba(0, 0, 0, 0.35); transform: rotate(-30deg); }
 
@@ -749,6 +769,8 @@ kbd.empty { color: var(--ink-2); }
     grid-template-columns: 1fr auto; grid-template-areas: "dpad face" "menu menu";
     row-gap: 18px; padding: 8px 4px 0;
   }
+  .touch-controls.has-shoulders { grid-template-areas: "shoulder shoulder" "dpad face" "menu menu"; }
+  .shoulder-buttons { grid-area: shoulder; }
   .dpad { grid-area: dpad; }
   .face-buttons { grid-area: face; }
   .menu-buttons { grid-area: menu; }
@@ -775,5 +797,8 @@ kbd.empty { color: var(--ink-2); }
   .dpad { grid-area: dpad; align-self: center; justify-self: center; }
   .face-buttons { grid-area: face; align-self: center; justify-self: center; }
   .menu-buttons { grid-area: menu; align-self: end; }
+  .shoulder-buttons { display: contents; }
+  .shoulder-buttons .l, .shoulder-buttons .l2 { grid-area: dpad; align-self: start; justify-self: center; }
+  .shoulder-buttons .r, .shoulder-buttons .r2 { grid-area: face; align-self: start; justify-self: center; }
   .grille { display: none; }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
+import { enabledExtensions } from "../../shared/platforms";
 import {
   MAX_GROUP_NAME,
   MAX_GROUPS,
@@ -47,7 +48,8 @@ type Props = {
   onFriends: () => void;
 };
 
-const ACCEPT = ".gb,.gbc,.sgb,application/octet-stream";
+/** Files of the platforms that can be played. */
+const ACCEPT = [...enabledExtensions(), "application/octet-stream"].join(",");
 
 /** Label stripe colors, picked from the ROM hash so a game keeps its color. */
 const HUES = ["#d6384a", "#2a615c", "#c98a1b", "#6a5a8c", "#4f7a3a", "#a4506f"];
@@ -470,7 +472,12 @@ export function RomPicker({
             )}
           </span>
         )}
-        <span>Bring your own legally dumped cartridge.</span>
+        <span>
+          Bring your own legally dumped cartridge.{" · "}
+          <a className="link on-dark" href="/licenses" target="_blank" rel="noopener">
+            Open-source licenses
+          </a>
+        </span>
       </footer>
 
       {confirmRemove && (

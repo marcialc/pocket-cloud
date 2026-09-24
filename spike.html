@@ -1,0 +1,110 @@
+<!doctype html>
+<!--
+  Dev-only Nostalgist spike: pnpm dev, then open /spike (the Cloudflare plugin
+  redirects /spike.html there). Not part of the production build: Vite only
+  bundles index.html unless build.rollupOptions.input says otherwise.
+  See src/spike/main.ts.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="robots" content="noindex" />
+    <title>Nostalgist spike</title>
+    <style>
+      :root { color-scheme: dark; --bg: #16131c; --panel: #221e2a; --ink: #efe9f5; --dim: #b3a9bf; --accent: #d6384a; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 12px; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      section { background: var(--panel); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      button { background: #3a3444; color: var(--ink); border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; }
+      button:disabled { opacity: 0.4; }
+      input[type="text"], input[type="number"] { width: 5.5em; background: #110e16; color: var(--ink); border: 1px solid #3a3444; border-radius: 4px; padding: 4px; font: 13px ui-monospace, monospace; }
+      .stat { font: 13px ui-monospace, monospace; color: var(--dim); }
+      .stat b { color: var(--ink); font-weight: 600; }
+      /* Size the box, not the canvas: RetroArch renames the canvas id to "canvas" and sets inline sizes. */
+      #screen-box { width: 100%; max-width: 480px; aspect-ratio: 10 / 9; margin: 0 auto; background: #000; }
+      #screen-box.gba { aspect-ratio: 3 / 2; }
+      #pad { display: grid; grid-template-columns: repeat(3, 56px) 1fr repeat(2, 64px); grid-template-rows: repeat(3, 48px) 40px; gap: 4px; max-width: 480px; margin: 8px auto 0;
+             -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+      #pad button { padding: 0; touch-action: none; }
+      #pad button.down { background: var(--accent); }
+      #probe-out, #sram-out { font: 13px ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
+      #log { height: 220px; overflow: auto; font: 12px/1.35 ui-monospace, monospace; white-space: pre-wrap; background: #0d0b11; border-radius: 6px; padding: 6px; margin: 0; }
+      .err { color: #ff8a95; }
+    </style>
+  </head>
+  <body>
+    <h1>Nostalgist spike</h1>
+
+    <section class="row">
+      <input id="rom" type="file" accept=".gb,.gbc,.gba" />
+      <button id="start" disabled>Start</button>
+      <button id="relaunch" disabled>Exit &amp; relaunch</button>
+      <label>× <input id="relaunch-count" type="number" value="20" min="1" max="200" aria-label="Relaunch cycles" /></label>
+      <label><input id="close-audio" type="checkbox" checked /> close AudioContexts on exit</label>
+      <button id="exit" disabled>Exit</button>
+      <label class="row">Vol <input id="volume" type="range" min="-40" max="0" step="1" value="-6" /></label>
+      <button id="mute">Mute</button>
+    </section>
+
+    <section class="row stat">
+      <span>core <b id="core">–</b></span>
+      <span>status <b id="status">idle</b></span>
+      <span>fps <b id="fps">–</b></span>
+      <span>session <b id="session">0:00</b></span>
+      <span>wasm <b id="wasm">–</b></span>
+      <span>heap <b id="heap">–</b></span>
+      <span>audio ctx <b id="audio">0 created / 0 live</b></span>
+    </section>
+
+    <div id="screen-box"><canvas id="screen"></canvas></div>
+
+    <div id="pad">
+      <button data-button="up" style="grid-area: 1 / 2">▲</button>
+      <button data-button="left" style="grid-area: 2 / 1">◀</button>
+      <button data-button="right" style="grid-area: 2 / 3">▶</button>
+      <button data-button="down" style="grid-area: 3 / 2">▼</button>
+      <button data-button="l" style="grid-area: 1 / 5">L</button>
+      <button data-button="r" style="grid-area: 1 / 6">R</button>
+      <button data-button="b" style="grid-area: 3 / 5">B</button>
+      <button data-button="a" style="grid-area: 2 / 6">A</button>
+      <button data-button="select" style="grid-area: 4 / 1 / 5 / 4">Select</button>
+      <button data-button="start" style="grid-area: 4 / 5 / 5 / 7">Start</button>
+    </div>
+
+    <section>
+      <div class="row">
+        Memory probe
+        <select id="probe-cmd">
+          <option>READ_CORE_MEMORY</option>
+          <option>READ_CORE_RAM</option>
+        </select>
+        <input id="probe-addr" type="text" value="C0A0" aria-label="Address (hex)" />
+        <input id="probe-len" type="number" value="3" min="1" max="256" aria-label="Length" />
+        <label><input id="probe-on" type="checkbox" checked /> poll 500 ms</label>
+      </div>
+      <div id="probe-out">–</div>
+    </section>
+
+    <section>
+      <div class="row">
+        SRAM poll
+        <label><input id="sram-on" type="checkbox" checked /> every 1 s</label>
+      </div>
+      <div id="sram-out">–</div>
+    </section>
+
+    <p class="stat">
+      Leak checks here only see wasm memory and AudioContext counts (iOS has no
+      performance.memory). For real leak checking on iOS, tether the iPhone to a
+      Mac over USB and record Safari Web Inspector's Timelines → Memory while
+      running the relaunch loop.
+    </p>
+
+    <pre id="log"></pre>
+
+    <script type="module" src="/src/spike/main.ts"></script>
+  </body>
+</html>

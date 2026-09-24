@@ -1,0 +1,101 @@
+<!doctype html>
+<!--
+  Open-source licenses for the components served to players. A static asset
+  (served as-is; the SPA fallback only covers paths with no file), opened in a
+  new tab from the start screen footer and the Account panel.
+  Keep it in step with public/vendor/*/VENDOR.md.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Open-source licenses · Pocket Cloud</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      /* Tokens from src/client/styles.css. */
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 23px; line-height: 1.25; }
+      h2 { margin: 0 0 6px; font-size: 17px; }
+      p, ul { margin: 0; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section ul { padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+      section li + li { margin-top: 4px; }
+      .tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--shell-press); vertical-align: 2px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>Open-source licenses</h1>
+      <p class="dim">
+        Pocket Cloud runs these open-source components in your browser. The license texts below are served from this
+        site next to the files they cover.
+      </p>
+
+      <section>
+        <h2>RetroArch <span class="tag">GPL-3.0</span></h2>
+        <ul>
+          <li>Used for Game Boy Advance games: the RetroArch frontend is compiled into <code>mgba_libretro.wasm</code>.</li>
+          <li>Unmodified libretro 1.22.2 build (libretro buildbot, stable 1.22.2, Emscripten).</li>
+          <li>
+            Source:
+            <a href="https://github.com/libretro/RetroArch/tree/a609b709eb9b5d9a7af89dbf40dd5c673280e636">libretro/RetroArch at commit a609b709</a>
+          </li>
+          <li>License: <a href="/vendor/retroarch/licenses/RetroArch-COPYING">GNU General Public License v3.0</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>mGBA (libretro core) <span class="tag">MPL-2.0</span></h2>
+        <ul>
+          <li>The Game Boy Advance emulator core, in <code>mgba_libretro.js</code> and <code>mgba_libretro.wasm</code>.</li>
+          <li>Unmodified libretro 1.22.2 build (libretro buildbot, stable 1.22.2, Emscripten).</li>
+          <li>
+            Source:
+            <a href="https://github.com/libretro/mgba/tree/c758314a639aa0066e7b65a8341448181b73c804">libretro/mgba at commit c758314a</a>
+          </li>
+          <li>License: <a href="/vendor/retroarch/licenses/mgba-LICENSE">Mozilla Public License 2.0</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>binjgb <span class="tag">MIT</span></h2>
+        <ul>
+          <li>The Game Boy and Game Boy Color emulator, in <code>binjgb.js</code> and <code>binjgb.wasm</code>. Copyright © 2016 Ben Smith.</li>
+          <li>Built from source with <a href="https://github.com/marcialc/pocket-cloud/blob/main/scripts/binjgb-patches/0001-fix-hang-after-cgb-speed-switch.patch">one bug fix</a> applied (a hang after a Game Boy Color speed switch).</li>
+          <li>
+            Source:
+            <a href="https://github.com/binji/binjgb/tree/c60e138da5a795ebb55e56b11b7e90024e41112c">binji/binjgb at commit c60e138d</a>
+          </li>
+          <li>License: <a href="/vendor/binjgb/LICENSE">MIT License</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Nostalgist.js <span class="tag">MIT</span></h2>
+        <ul>
+          <li>Loads and runs the RetroArch core. Version 0.22.0, unmodified, bundled into the app. Copyright © 2023 arianrhodsandlot.</li>
+          <li>Source: <a href="https://github.com/arianrhodsandlot/nostalgist/tree/v0.22.0">arianrhodsandlot/nostalgist at v0.22.0</a></li>
+          <li>License: <a href="/vendor/nostalgist/LICENSE">MIT License</a></li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

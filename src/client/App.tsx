@@ -173,7 +173,7 @@ export function App() {
     (patch: Partial<Preferences>) => {
       storePrefs(patch);
       // Signed in: the controls follow the account to other browsers.
-      if (patch.keyBindings && accountRef.current) void pushKeyBindings(accountRef.current, patch.keyBindings);
+      if (patch.controls && accountRef.current) void pushKeyBindings(accountRef.current, patch.controls);
       // ...and so do the library's favorites and groups.
       if (patch.shelf && accountRef.current) void pushShelf(accountRef.current, patch.shelf);
     },
@@ -184,8 +184,8 @@ export function App() {
   useEffect(() => {
     if (!account) return;
     let stale = false;
-    syncKeyBindings(account, loadPreferences().keyBindings).then(
-      (keyBindings) => !stale && keyBindings && storePrefs({ keyBindings }),
+    syncKeyBindings(account, loadPreferences().controls).then(
+      (controls) => !stale && controls && storePrefs({ controls }),
       (err) => console.warn("Could not load the controls from the account", err),
     );
     return () => {
@@ -211,7 +211,7 @@ export function App() {
     async (data: ArrayBuffer, fileName: string, picked: boolean) => {
       setStage({ name: "loading", label: "Reading cartridge…" });
       try {
-        const rom = await inspectRom(data);
+        const rom = await inspectRom(data, fileName);
         if (prefs.rememberRom) {
           const existing = await getRom(rom.romHash);
           const now = Date.now();
@@ -423,9 +423,9 @@ export function App() {
           )}
           {panel === "controls" && (
             <ControlsPanel
-              bindings={prefs.keyBindings}
+              bindings={prefs.controls}
               signedIn={!!account}
-              onChange={(keyBindings) => updatePrefs({ keyBindings })}
+              onChange={(controls) => updatePrefs({ controls })}
               onClose={() => setPanel(null)}
             />
           )}

@@ -256,6 +256,19 @@ describe("leaderboards", () => {
     ]);
   });
 
+  it("keeps other platforms' saves and scores off the boards", async () => {
+    const ash = await player("Ash");
+    const rom = randomHash();
+    const sram = new Uint8Array(32 * 1024);
+    sram[0x25a3] = 0b0000_0111;
+    // A NES file named like a Game Boy title isn't a Pokémon Red save.
+    await putSave(ash.cookie, rom, "nes:POKEMON RED", sram, 5_000);
+    const res = await call(ash.cookie, "PUT", `/scores/${rom}`, { board: "tetris", value: 100, title: "nes:TETRIS" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "unsupported_game" });
+    expect(await games(ash.cookie, rom)).toEqual([]);
+  });
+
   it("takes browser-reported scores only for boards the browser watches", async () => {
     const ash = await player("Ash");
     const rom = randomHash();

@@ -1,9 +1,12 @@
-import { GAME_BOY_BUTTONS, type GameBoyButton } from "./GameBoyEmulator";
+import { CONTROLS_IDS, PLATFORMS, type Button, type ControlsId } from "../../shared/platforms";
 
-/** Keyboard codes (KeyboardEvent.code) assigned to each Game Boy button. */
-export type KeyBindings = Record<GameBoyButton, string[]>;
+/** Keyboard codes (KeyboardEvent.code) assigned to each of one platform's buttons. */
+export type KeyBindings = Partial<Record<Button, string[]>>;
 
-export const DEFAULT_KEY_BINDINGS: KeyBindings = {
+/** Every platform's bindings (the Game Boy Color shares the Game Boy's; see ControlsId). */
+export type AllKeyBindings = Record<ControlsId, KeyBindings>;
+
+const GAME_BOY: KeyBindings = {
   up: ["ArrowUp"],
   down: ["ArrowDown"],
   left: ["ArrowLeft"],
@@ -14,16 +17,22 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   select: ["ShiftLeft", "ShiftRight"],
 };
 
-export const BUTTON_LABELS: Record<GameBoyButton, string> = {
-  up: "Up",
-  down: "Down",
-  left: "Left",
-  right: "Right",
-  a: "A",
-  b: "B",
-  start: "Start",
-  select: "Select",
+/** Extra buttons sit next to Z and X: A and S (GBA shoulders, SNES Y and X), C, then Q and W for shoulders. */
+export const DEFAULT_KEY_BINDINGS: AllKeyBindings = {
+  gb: GAME_BOY,
+  gba: { ...GAME_BOY, l: ["KeyA"], r: ["KeyS"] },
+  nes: GAME_BOY,
+  snes: { ...GAME_BOY, x: ["KeyS"], y: ["KeyA"], l: ["KeyQ"], r: ["KeyW"] },
+  genesis: { ...pick(GAME_BOY, "up", "down", "left", "right", "a", "b", "start"), c: ["KeyC"] },
+  sms: pick(GAME_BOY, "up", "down", "left", "right", "a", "b", "start"),
+  gamegear: pick(GAME_BOY, "up", "down", "left", "right", "a", "b", "start"),
+  lynx: { ...pick(GAME_BOY, "up", "down", "left", "right", "a", "b", "start"), l: ["KeyA"], r: ["KeyS"] },
+  psx: { ...GAME_BOY, x: ["KeyS"], y: ["KeyA"], l: ["KeyQ"], r: ["KeyW"], l2: ["Digit1"], r2: ["Digit2"] },
 };
+
+function pick(bindings: KeyBindings, ...buttons: Button[]): KeyBindings {
+  return Object.fromEntries(buttons.map((b) => [b, bindings[b] ?? []]));
+}
 
 /**
  * Keys that can't be bound: Escape cancels rebinding, and the handler ignores
@@ -36,9 +45,9 @@ export function isBindable(code: string): boolean {
 }
 
 /** code -> button lookup for the key handler. */
-export function keyMap(bindings: KeyBindings): Map<string, GameBoyButton> {
-  const map = new Map<string, GameBoyButton>();
-  for (const button of GAME_BOY_BUTTONS) for (const code of bindings[button]) map.set(code, button);
+export function keyMap(bindings: KeyBindings): Map<string, Button> {
+  const map = new Map<string, Button>();
+  for (const [button, codes] of Object.entries(bindings) as [Button, string[]][]) for (const code of codes) map.set(code, button);
   return map;
 }
 
@@ -46,30 +55,53 @@ export function keyMap(bindings: KeyBindings): Map<string, GameBoyButton> {
  * Assign `code` as the only key for `button`. If another button used that key
  * it loses it (a key drives exactly one button).
  */
-export function rebind(bindings: KeyBindings, button: GameBoyButton, code: string): KeyBindings {
-  const next = {} as KeyBindings;
-  for (const b of GAME_BOY_BUTTONS) next[b] = b === button ? [code] : bindings[b].filter((c) => c !== code);
+export function rebind(bindings: KeyBindings, button: Button, code: string): KeyBindings {
+  const next: KeyBindings = {};
+  for (const [b, codes] of Object.entries(bindings) as [Button, string[]][]) next[b] = codes.filter((c) => c !== code);
+  next[button] = [code];
   return next;
 }
 
-/** Validates bindings loaded from storage; falls back to defaults per button. */
-export function sanitizeBindings(value: unknown): KeyBindings {
+/** Validates one platform's bindings loaded from storage; falls back to defaults per button. */
+export function sanitizeBindings(value: unknown, controls: ControlsId = "gb"): KeyBindings {
   const input = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   const seen = new Set<string>();
-  const result = {} as KeyBindings;
-  for (const button of GAME_BOY_BUTTONS) {
+  const result: KeyBindings = {};
+  for (const button of PLATFORMS[controls].buttons) {
     const raw = input[button];
     const codes = Array.isArray(raw)
       ? raw.filter((c): c is string => typeof c === "string" && isBindable(c) && !seen.has(c))
-      : [...DEFAULT_KEY_BINDINGS[button]];
+      : [...DEFAULT_KEY_BINDINGS[controls][button]!];
     codes.forEach((c) => seen.add(c));
     result[button] = codes;
   }
   return result;
 }
 
+/** Validates every platform's bindings; platforms missing from `value` get their defaults. */
+export function sanitizeAllBindings(value: unknown): AllKeyBindings {
+  const input = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
+  return Object.fromEntries(CONTROLS_IDS.map((id) => [id, sanitizeBindings(input[id], id)])) as AllKeyBindings;
+}
+
 export function sameBindings(a: KeyBindings, b: KeyBindings): boolean {
-  return GAME_BOY_BUTTONS.every((btn) => a[btn].join() === b[btn].join());
+  const buttons = new Set([...Object.keys(a), ...Object.keys(b)] as Button[]);
+  return [...buttons].every((btn) => (a[btn] ?? []).join() === (b[btn] ?? []).join());
+}
+
+/**
+ * The platforms other than the Game Boy whose bindings aren't the defaults:
+ * what gets stored and sent. The Game Boy's always go on their own (`keyBindings`),
+ * where older versions of the app read them.
+ */
+export function customPlatformBindings(all: AllKeyBindings): Partial<AllKeyBindings> {
+  return Object.fromEntries(
+    CONTROLS_IDS.filter((id) => id !== "gb" && !sameBindings(all[id], DEFAULT_KEY_BINDINGS[id])).map((id) => [id, all[id]]),
+  );
+}
+
+export function sameAllBindings(a: AllKeyBindings, b: AllKeyBindings): boolean {
+  return CONTROLS_IDS.every((id) => sameBindings(a[id], b[id]));
 }
 
 const NAMED: Record<string, string> = {

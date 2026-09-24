@@ -1,4 +1,5 @@
 import { HASH_PATTERN } from "../shared/api";
+import { isGameBoyGameId } from "../shared/platforms";
 import {
   CLIENT_BOARDS,
   INVITE_TOKEN_PATTERN,
@@ -75,6 +76,8 @@ export async function handleSocial(request: Request, env: Env, url: URL, playerI
       return json({ error: "invalid_value" }, 400);
     }
     if (!isGameTitle(body.title)) return json({ error: "invalid_title" }, 400);
+    // The boards follow Game Boy games by header title; other platforms' saves have no board yet.
+    if (!isGameBoyGameId(body.title)) return json({ error: "unsupported_game" }, 400);
     await social.recordScores(playerId, scoreHash, body.title, [{ board: body.board, value }]);
     return new Response(null, { status: 204 });
   }
@@ -149,13 +152,15 @@ export async function handleInvitePreview(request: Request, env: Env, path: stri
 /**
  * After an account uploads a save: its play time, and the Pokédex count for
  * Red/Blue, go on the game's leaderboard. Best effort; a failure here never
- * fails the save.
+ * fails the save. Game Boy / Game Boy Color games only: the boards know games
+ * by header title, and other platforms' gameIds aren't titles.
  */
 export async function recordSaveScores(
   env: Env,
   playerId: string,
   save: { romHash: string; gameId: string; sram: Uint8Array; playTime?: number },
 ): Promise<void> {
+  if (!isGameBoyGameId(save.gameId)) return;
   const scores: ScoreInput[] = [];
   if (save.playTime !== undefined && save.playTime > 0) scores.push({ board: "playtime", value: save.playTime });
   const caught = pokedexCaught(save.gameId, save.sram);

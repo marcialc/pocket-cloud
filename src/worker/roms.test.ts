@@ -141,17 +141,27 @@ describe("cloud ROM library", () => {
     expect(list).toEqual({ roms: [], removed: [rom.hash] });
   });
 
-  it("stops reading a body without Content-Length once it passes 8 MiB", async () => {
+  it("stops reading a body without Content-Length once it passes 32 MiB", async () => {
     const cookie = await signIn();
     const chunk = new Uint8Array(1024 * 1024);
     let sent = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (sent++ < 9) controller.enqueue(chunk);
+        if (sent++ < 33) controller.enqueue(chunk);
         else controller.close();
       },
     });
     expect((await putRom(cookie, "c".repeat(64), body)).status).toBe(413);
+  });
+
+  it("takes small ROMs (a 16 KiB NES game) but not tiny files", async () => {
+    const cookie = await signIn();
+    const nes = new Uint8Array(16 * 1024 + 16).map((_, i) => (i * 29) & 0xff);
+    expect((await putRom(cookie, await sha256Hex(nes), nes, "game.nes")).status).toBe(200);
+    const tiny = new Uint8Array(512).fill(1);
+    const res = await putRom(cookie, await sha256Hex(tiny), tiny, "tiny.nes");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_rom_size" });
   });
 
   it("stops at 100 games", async () => {
