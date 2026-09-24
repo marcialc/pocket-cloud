@@ -20,6 +20,7 @@ import { FriendsPanel } from "./FriendsPanel";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
+import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { describeStatus, SyncBadge } from "./SyncBadge";
 import { TouchControls } from "./TouchControls";
 
@@ -147,8 +148,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   }, [emulator, prefs.volume, prefs.muted]);
   useEffect(() => sync?.setCloudEnabled(prefs.cloudSync), [sync, prefs.cloudSync]);
 
-  // Largest whole-number scale that fits: every LCD pixel stays the same size.
-  // Phones (--device-px) count whole device pixels instead, e.g. 1.5x on a 2x screen.
+  // Fill the space (times the "Screen size" setting), rounded down to whole device pixels
+  // so the LCD's edges stay sharp, e.g. 2.5x on a 2x screen.
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
@@ -158,14 +159,15 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       const chromeY = parseFloat(css.getPropertyValue("--chrome-y")) || 0;
       const w = el.clientWidth - chromeX;
       const h = el.clientHeight - chromeY;
-      const step = css.getPropertyValue("--device-px").trim() === "1" ? window.devicePixelRatio || 1 : 1;
-      setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H) * step) / step));
+      const step = window.devicePixelRatio || 1;
+      setScale(Math.max(1, Math.floor(Math.min(w / LCD_W, h / LCD_H) * prefs.screenSize * step) / step));
     };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the LCD size is fixed per session
+  }, [prefs.screenSize]);
 
   // Screen readers hear sync changes (state changes only, not every timestamp).
   const statusKind = describeStatus(status).label;
@@ -479,6 +481,10 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   <div className="sheet-row">
                     <label htmlFor="menu-volume">Volume</label>
                     <VolumeSlider prefs={prefs} onPrefs={onPrefs} id="menu-volume" />
+                  </div>
+                  <div className="sheet-row">
+                    <label htmlFor="menu-screen-size">Screen size</label>
+                    <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} id="menu-screen-size" />
                   </div>
                   <label className="sheet-row">
                     Vibrate on press

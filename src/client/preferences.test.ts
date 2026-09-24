@@ -56,4 +56,14 @@ describe("preferences", () => {
     expect(JSON.parse(store.get(KEY)!).keyBindings).toEqual(REMAPPED);
     expect(loadPreferences().controls).toEqual(controls);
   });
+
+  it("fills the space by default and keeps a stored screen size in range", () => {
+    expect(loadPreferences().screenSize).toBe(1);
+    store.set(KEY, JSON.stringify({ screenSize: 0.75 }));
+    expect(loadPreferences().screenSize).toBe(0.75);
+    store.set(KEY, JSON.stringify({ screenSize: 0.1 }));
+    expect(loadPreferences().screenSize).toBe(0.5);
+    store.set(KEY, JSON.stringify({ screenSize: "big" }));
+    expect(loadPreferences().screenSize).toBe(1);
+  });
 });

@@ -22,6 +22,8 @@ export type Preferences = {
   reduceMotion: boolean;
   /** Vibrate on touch-gamepad presses (phones that support it). */
   haptics: boolean;
+  /** How much of the space beside the controls the game screen fills, 0.5–1. */
+  screenSize: number;
   /** Favorite games and groups in the library (follows the account when signed in). */
   shelf: Shelf;
 };
@@ -38,6 +40,7 @@ const DEFAULTS: Preferences = {
   uiSounds: false,
   reduceMotion: false,
   haptics: true,
+  screenSize: 1,
   shelf: EMPTY_SHELF,
 };
 
@@ -52,10 +55,17 @@ export function loadPreferences(): Preferences {
       ...stored,
       controls: sanitizeAllBindings({ ...stored.controls, ...(keyBindings ? { gb: keyBindings } : {}) }),
       shelf: sanitizeShelf(stored.shelf ?? EMPTY_SHELF),
+      screenSize: clampScreenSize(stored.screenSize),
     };
   } catch {
     return DEFAULTS;
   }
+}
+
+export const MIN_SCREEN_SIZE = 0.5;
+
+function clampScreenSize(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(MIN_SCREEN_SIZE, value)) : DEFAULTS.screenSize;
 }
 
 export function savePreferences(prefs: Preferences): void {

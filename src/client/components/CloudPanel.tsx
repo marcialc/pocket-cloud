@@ -9,6 +9,7 @@ import type { SyncStatus } from "../saves/SaveSync";
 import { backupName, downloadBytes } from "./download";
 import { formatWhen } from "./format";
 import { Icon } from "./icons";
+import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { SidePanel } from "./SidePanel";
 import { SignInForm } from "./SignInForm";
 import { Badge, describeStatus } from "./SyncBadge";
@@ -222,6 +223,13 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
               onChange={(on) => onPrefs({ cloudRoms: on ? "on" : "off" })}
             />
           )}
+          <label className="setting">
+            <span>
+              <strong>Screen size</strong>
+              <small>How much of the window the game screen fills.</small>
+            </span>
+            <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} />
+          </label>
           <Setting
             title="UI sounds"
             desc="Soft clicks when you press buttons in menus. Never during play."
