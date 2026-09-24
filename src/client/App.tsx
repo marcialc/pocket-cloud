@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ListRomsResponse } from "../shared/api";
-import { EMPTY_SHELF, forgetGame, gameName, renameGame, type Shelf } from "../shared/shelf";
+import { EMPTY_SHELF, forgetGame, gameName, renameGame, sameShelf, type Shelf } from "../shared/shelf";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { FriendsPanel } from "./components/FriendsPanel";
@@ -221,19 +221,26 @@ export function App() {
   const warnLegacyNames = (err: unknown) => console.warn("Could not move game names to the library shelf", err);
 
   // Signed in: use the account's favorites and groups (or give it this browser's if it has none yet).
+  // Checked again whenever the page comes back into view: phones keep a tab open for days, and the
+  // player may have changed the shelf on another device meanwhile.
   useEffect(() => {
     if (!account) return;
     let stale = false;
-    syncShelf(account, loadPreferences().shelf).then(
-      (shelf) => {
-        if (stale) return;
-        if (shelf) storePrefs({ shelf });
-        adoptLegacyNames(shelf ?? loadPreferences().shelf).catch(warnLegacyNames);
-      },
-      (err) => console.warn("Could not load the library groups from the account", err),
-    );
+    const sync = () =>
+      syncShelf(account, loadPreferences().shelf).then(
+        (shelf) => {
+          if (stale) return;
+          if (shelf && !sameShelf(shelf, loadPreferences().shelf)) storePrefs({ shelf });
+          adoptLegacyNames(shelf ?? loadPreferences().shelf).catch(warnLegacyNames);
+        },
+        (err) => console.warn("Could not load the library groups from the account", err),
+      );
+    const onVisible = () => document.visibilityState === "visible" && void sync();
+    void sync();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stale = true;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [account, storePrefs, adoptLegacyNames]);
 
