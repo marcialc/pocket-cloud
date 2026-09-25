@@ -388,7 +388,7 @@ export function RomPicker({
               const favorite = favorites.has(rom.romHash);
               const cover = covers && coverFor(covers, rom);
               return (
-                <li key={rom.romHash} className="game-card plastic">
+                <li key={rom.romHash} className={`game-card plastic${favorite ? " shiny" : ""}`}>
                   <button
                     type="button"
                     className={`fav-toggle tip tip-below${favorite ? " on" : ""}`}
