@@ -56,6 +56,16 @@ class FakeNostalgist {
   pressDown = vi.fn();
   pressUp = vi.fn();
   sendCommand = vi.fn();
+  /** The snapshot the running game last loaded. */
+  loadedState: Uint8Array | null = null;
+  /** saveState() never answers (a core that doesn't get to it, like one in a hidden tab). */
+  stallSaveState = false;
+  saveState = vi.fn(() =>
+    this.stallSaveState
+      ? new Promise<never>(() => {})
+      : Promise.resolve({ state: new Blob([new Uint8Array([7, 7, 7])]) }),
+  );
+  loadState = vi.fn(async (state: Blob) => void (this.loadedState = new Uint8Array(await state.arrayBuffer())));
   constructor(readonly options: Record<string, unknown>) {}
   getStatus = () => this.status;
   getEmscriptenModule = () => this.module;
@@ -395,5 +405,70 @@ describe("NostalgistEmulator", () => {
     emu.destroy();
     await expect(loading).rejects.toThrow(/destroyed/);
     expect(nostalgists[0]!.exit).toHaveBeenCalled();
+  });
+
+  describe("snapshots", () => {
+    it("carries on from a snapshot loaded before start, once the game runs", async () => {
+      const { emu, core } = await loaded();
+      emu.loadState(bytes(1, 2, 3));
+      expect(core.loadState).not.toHaveBeenCalled();
+      emu.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(core.loadedState).toEqual(bytes(1, 2, 3));
+    });
+
+    it("only takes a snapshot before start", async () => {
+      const { emu } = await started();
+      expect(() => emu.loadState(bytes(1))).toThrow();
+    });
+
+    it("boots normally when the snapshot doesn't load", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { emu, core } = await loaded();
+      core.loadState.mockRejectedValueOnce(new Error("fs timeout"));
+      emu.loadState(bytes(1));
+      emu.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(emu.running).toBe(true);
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it("doesn't load the snapshot again when a reset relaunches the game", async () => {
+      const { emu } = await loaded();
+      emu.loadState(bytes(1));
+      emu.start();
+      await vi.advanceTimersByTimeAsync(0);
+      emu.loadSram(bytes(5, 6));
+      emu.reset();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(nostalgists.at(-1)!.loadState).not.toHaveBeenCalled();
+    });
+
+    it("snapshots the running game, and has nothing to snapshot before it runs", async () => {
+      const { emu } = await loaded();
+      expect(await emu.saveState()).toBeNull();
+      emu.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await emu.saveState()).toEqual(bytes(7, 7, 7));
+    });
+
+    it("doesn't ask for a snapshot while RetroArch's frame loop is stopped", async () => {
+      const { emu, core } = await started();
+      emu.pause();
+      expect(await emu.saveState()).toBeNull();
+      emu.start();
+      (document as unknown as { hidden: boolean }).hidden = true;
+      expect(await emu.saveState()).toBeNull();
+      expect(core.saveState).not.toHaveBeenCalled();
+    });
+
+    it("gives up on a snapshot RetroArch never writes", async () => {
+      const { emu, core } = await started();
+      core.stallSaveState = true;
+      const taking = emu.saveState();
+      const result = expect(taking).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(5000);
+      await result;
+    });
   });
 });

@@ -34,6 +34,8 @@ const CORE_SAVE_DIRS: Record<string, string> = { mgba: "mGBA" };
 /** Any fixed name will do: it only decides where RetroArch puts the .srm. */
 const ROM_BASE_NAME = "game";
 const SRAM_POLL_INTERVAL_MS = 1000;
+/** RetroArch writes a snapshot a few frames after asking; a hidden tab's core may never get to it. */
+const SAVE_STATE_TIMEOUT_MS = 5000;
 const MUTED_DB = -80;
 const GESTURES = ["pointerdown", "keydown", "touchend"] as const;
 
@@ -102,6 +104,8 @@ export class NostalgistEmulator implements Emulator {
   private sramReal = false;
   /** Loaded while the game ran; applied by the next reset(), like swapping the cartridge's battery RAM. */
   private sramToLoad: Uint8Array | null = null;
+  /** From loadState(): the first launch carries on from it. */
+  private stateToLoad: Uint8Array<ArrayBuffer> | null = null;
   private sramDirty = false;
   private sramTimer: ReturnType<typeof setInterval> | null = null;
   private readonly sramListeners = new Set<() => void>();
@@ -127,6 +131,7 @@ export class NostalgistEmulator implements Emulator {
     this.failed = false;
     this.setSram(null);
     this.sramToLoad = null;
+    this.stateToLoad = null;
     const nostalgist = await this.prepare();
     if (this.destroyed) {
       exitNostalgist(nostalgist);
@@ -204,6 +209,22 @@ export class NostalgistEmulator implements Emulator {
   onSramWrite(listener: () => void): () => void {
     this.sramListeners.add(listener);
     return () => this.sramListeners.delete(listener);
+  }
+
+  async saveState(): Promise<Uint8Array | null> {
+    const core = this.liveCore();
+    // RetroArch writes a snapshot from its frame loop, which stops while paused and in a hidden tab:
+    // asking then would only time out (and hold up the next snapshot).
+    if (!core || !this.wantRunning || document.hidden) return null;
+    const { state } = await withTimeout(core.saveState(), SAVE_STATE_TIMEOUT_MS, "Taking a snapshot timed out.");
+    return new Uint8Array(await state.arrayBuffer());
+  }
+
+  /** Applied once RetroArch runs the game (start() launches it asynchronously). */
+  loadState(data: Uint8Array): void {
+    if (!this.rom) throw new Error("No ROM loaded.");
+    if (this.started) throw new Error("Load a snapshot before start().");
+    this.stateToLoad = data.slice();
   }
 
   /** Called if RetroArch fails to start (the game then stays stopped). */
@@ -296,6 +317,13 @@ export class NostalgistEmulator implements Emulator {
     for (const ctx of contexts) this.audioContexts.add(ctx);
     // Still launching, so not through applyVolume(): the volume may have changed since prepare().
     (nostalgist.getEmscriptenModule() as unknown as RetroArchModule)._cmd_set_volume?.(this.volumeDb());
+    const state = this.stateToLoad;
+    this.stateToLoad = null;
+    if (state) {
+      // A snapshot that doesn't load leaves the game as it just powered on.
+      await nostalgist.loadState(new Blob([state])).catch((err: unknown) => console.warn("Could not resume from the snapshot", err));
+      if (this.destroyed || this.nostalgist !== nostalgist) return;
+    }
     for (const button of this.pressed) if (this.hasButton(button)) nostalgist.pressDown(button);
     if (this.wantRunning) {
       this.resumeAudio();
@@ -478,6 +506,12 @@ function exitNostalgist(nostalgist: Nostalgist): void {
     // A core that never started has little to tear down.
     console.warn("Could not exit the emulator cleanly", err);
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)));
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function closeAudio(contexts: Set<AudioContext>): void {

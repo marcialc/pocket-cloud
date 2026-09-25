@@ -18,8 +18,11 @@ import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
 import { forgetUnsyncedShelf, pushShelf, syncShelf } from "./saves/shelfSync";
 import { clearInvite, takeInvite } from "./saves/invite";
+import { deleteResumeState } from "./saves/resumeStates";
 import {
+  addMissingSha1,
   clearCloudSyncState,
+  DbBlockedError,
   deleteLocalSave,
   deleteRom,
   forgetLegacyNames,
@@ -59,6 +62,8 @@ type Stage =
   | { name: "choose"; rom: RomInfo; romData: ArrayBuffer; plan: LaunchPlan }
   | { name: "play"; session: Session };
 
+const BLOCKED_MESSAGE = new DbBlockedError().message;
+
 export function App() {
   const [stage, setStage] = useState<Stage>({ name: "pick" });
   const [prefs, setPrefs] = useState<Preferences>(loadPreferences);
@@ -87,10 +92,29 @@ export function App() {
   }, [prefs.reduceMotion]);
   useEffect(() => (prefs.uiSounds ? bindUiSounds() : undefined), [prefs.uiSounds]);
 
-  const refreshLibrary = useCallback(() => {
-    listRoms().then(setLibrary, () => setLibrary([]));
+  const refreshLibrary = useCallback(function refresh() {
+    listRoms().then(
+      (roms) => {
+        setLibrary(roms);
+        setStage((s) => (s.name === "pick" && s.error === BLOCKED_MESSAGE ? { name: "pick" } : s));
+      },
+      (err: unknown) => {
+        if (!(err instanceof DbBlockedError)) return setLibrary([]);
+        // A tab running older code holds the database: say so (an empty shelf would look like the games
+        // are gone), and look again when the player comes back from closing it.
+        setStage((s) => (s.name === "pick" ? { name: "pick", error: BLOCKED_MESSAGE } : s));
+        window.addEventListener("focus", () => refresh(), { once: true });
+      },
+    );
   }, []);
   useEffect(refreshLibrary, [refreshLibrary]);
+  // ROMs stored before their SHA-1 was kept have no box art until it's worked out from their bytes.
+  useEffect(() => {
+    addMissingSha1().then(
+      (added) => added > 0 && refreshLibrary(),
+      (err) => console.warn("Could not look up box art for older games", err),
+    );
+  }, [refreshLibrary]);
 
   /** Signed in with cloud backup on: show and download the account's games. */
   const cloudLibrary = !!account && prefs.cloudSync;
@@ -306,7 +330,8 @@ export function App() {
         }
       } catch (err) {
         console.error(err);
-        const message = err instanceof RomError ? err.message : "Something went wrong loading that file.";
+        const message =
+          err instanceof RomError || err instanceof DbBlockedError ? err.message : "Something went wrong loading that file.";
         setStage({ name: "pick", error: message });
       }
     },
@@ -367,7 +392,11 @@ export function App() {
   const removeStored = useCallback(
     async (romHash: string, alsoSave: boolean, alsoCloud: boolean) => {
       await deleteRom(romHash);
-      if (alsoSave) await deleteLocalSave(romHash);
+      if (alsoSave) {
+        await deleteLocalSave(romHash);
+        // Carrying on from the old spot would bring the deleted save back.
+        await deleteResumeState(romHash).catch((err) => console.warn("Could not forget where the game was left", err));
+      }
       let removedFromAccount = false;
       if (alsoCloud) {
         removedFromAccount = await deleteCloudRom(romHash).then(

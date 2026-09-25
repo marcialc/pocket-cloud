@@ -49,6 +49,20 @@ export interface Emulator {
    * the game then stays stopped. Returns an unsubscribe function.
    */
   onError?(listener: (error: Error) => void): () => void;
+  /**
+   * Snapshot of the whole console (CPU, memory, cartridge RAM) to carry on
+   * from later with loadState(); null if there's nothing to snapshot yet.
+   */
+  saveState?(): Promise<Uint8Array | null>;
+  /**
+   * Carry on from a saveState() snapshot of the same ROM instead of powering
+   * on. Call after loadRom(), loadSram() and setClock(), before start(). Throws
+   * if the snapshot doesn't fit this core; the console is then left as it was
+   * (cores that start asynchronously find out then, and boot normally).
+   * The cartridge clock resumes from the snapshot's time and catches up with
+   * real time at the next reset().
+   */
+  loadState?(data: Uint8Array): void;
   /** Deliver any pending onSramWrite notification now (e.g. before the page unloads). */
   flushSramWrites(): void;
 

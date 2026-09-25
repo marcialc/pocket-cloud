@@ -38,6 +38,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   await deleteLocalSave(ROM.romHash);
 });
 
@@ -124,6 +125,91 @@ describe("SaveSync", () => {
     expect(b.getRtcBase()).toBe(RTC_BASE);
     expect((await getLocalSave(ROM.romHash))!.rtcBase).toBe(RTC_BASE);
     b.destroy();
+  });
+
+  describe("after a conflict", () => {
+    /** A save both sides agreed on at revision 1. */
+    const synced = (): LocalGameSave => ({
+      gameId: ROM.gameId, romHash: ROM.romHash, sram: new Uint8Array(16).buffer, sramHash: "0".repeat(64),
+      updatedAt: 1, playTime: 0, rtcBase: RTC_BASE, cloud: { revision: 1, sramHash: "0".repeat(64), rtcBase: RTC_BASE },
+    });
+    /** Another device's upload, saved at `updatedAt`. */
+    const otherDevice = (updatedAt: number) => ({
+      gameId: ROM.gameId, romHash: ROM.romHash, sramHash: "2".repeat(64), sramSize: 16, revision: 2, createdAt: 1, updatedAt,
+    });
+    /** Cloud that refuses plain uploads (another device moved it) and accepts forced ones. */
+    const cloudThatMoved = (puts: { force?: boolean }[], hold?: Promise<void>) =>
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        puts.push(body);
+        await hold;
+        if (body.force) return Response.json({ ok: true, save: { ...body, romHash: ROM.romHash, sramSize: 16, revision: 3, createdAt: 1, sram: undefined } });
+        return Response.json({ ok: false, conflict: otherDevice(2000) }, { status: 409 });
+      });
+
+    it("keeps an in-game save on this device instead of overwriting the other device's save", async () => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+      const puts: { force?: boolean }[] = [];
+      vi.stubGlobal("fetch", cloudThatMoved(puts));
+      const emu = fakeEmulator();
+      const sync = new SaveSync(emu, ROM, synced(), true, RTC_BASE);
+      emu.gameWrites([1]);
+      await sync.flush();
+      expect(sync.getStatus()).toMatchObject({ state: "conflict" });
+
+      // The game saves again before the player chooses, now newer than the cloud copy.
+      now.mockReturnValue(3000);
+      emu.gameWrites([2]);
+      await sync.flush();
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(puts.some((p) => p.force)).toBe(false);
+      expect(sync.getStatus()).toMatchObject({ state: "conflict" });
+      expect(Array.from(new Uint8Array((await getLocalSave(ROM.romHash))!.sram)).slice(0, 1)).toEqual([2]);
+      sync.destroy();
+    });
+
+    it("keepLocal() made during an upload still overwrites the cloud once it finishes", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(1000);
+      let release!: () => void;
+      const puts: { force?: boolean }[] = [];
+      const fetchMock = cloudThatMoved(puts, new Promise<void>((r) => (release = r)));
+      vi.stubGlobal("fetch", fetchMock);
+      const emu = fakeEmulator();
+      const sync = new SaveSync(emu, ROM, synced(), true, RTC_BASE);
+      emu.gameWrites([1]);
+      void sync.flush();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+      sync.keepLocal();
+      await new Promise((r) => setTimeout(r, 10)); // its push comes due while the first is in flight
+      release();
+
+      await vi.waitFor(() => expect(sync.getStatus().state).toBe("synced"));
+      expect(puts.map((p) => !!p.force)).toEqual([false, true]);
+      sync.destroy();
+    });
+
+    it("keepLocal() made during an upload still overwrites the cloud when the game is closed at once", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(1000);
+      let release!: () => void;
+      const puts: { force?: boolean }[] = [];
+      const fetchMock = cloudThatMoved(puts, new Promise<void>((r) => (release = r)));
+      vi.stubGlobal("fetch", fetchMock);
+      const emu = fakeEmulator();
+      const sync = new SaveSync(emu, ROM, synced(), true, RTC_BASE);
+      emu.gameWrites([1]);
+      void sync.flush();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+      sync.keepLocal();
+      // Leaving the game: flush, then tear down straight away (as GameScreen does).
+      const leaving = sync.flush().then(() => sync.destroy());
+      release();
+      await leaving;
+
+      expect(puts.map((p) => !!p.force)).toEqual([false, true]);
+    });
   });
 
   it("gives an older save without a clock base the one this boot started with", async () => {

@@ -166,6 +166,29 @@ export class BinjgbEmulator implements Emulator {
     return () => this.sramListeners.delete(listener);
   }
 
+  async saveState(): Promise<Uint8Array | null> {
+    const m = this.module;
+    if (!m || !this.e) return null;
+    return this.withState((fileData) => {
+      if (m._emulator_write_state(this.e, fileData) !== 0) return null;
+      const ptr = m._get_file_data_ptr(fileData);
+      return m.HEAPU8.slice(ptr, ptr + m._get_file_data_size(fileData));
+    });
+  }
+
+  loadState(data: Uint8Array): void {
+    const m = this.requireCore();
+    this.withState((fileData) => {
+      if (m._get_file_data_size(fileData) !== data.byteLength) {
+        throw new Error(`Snapshot size mismatch: core expects ${m._get_file_data_size(fileData)} bytes, got ${data.byteLength}.`);
+      }
+      m.HEAPU8.set(data, m._get_file_data_ptr(fileData));
+      if (m._emulator_read_state(this.e, fileData) !== 0) throw new Error("This snapshot doesn't fit this game.");
+    });
+    // Mid-game now: the mapper is past its power-on state, so a new clock waits for reset().
+    this.coreStarted = true;
+  }
+
   flushSramWrites(): void {
     this.flushSramNotification();
   }
@@ -247,6 +270,16 @@ export class BinjgbEmulator implements Emulator {
     const fileData = m._ext_ram_file_data_new(this.e);
     try {
       return fn(fileData, m._get_file_data_size(fileData));
+    } finally {
+      m._file_data_delete(fileData);
+    }
+  }
+
+  private withState<T>(fn: (fileData: number) => T): T {
+    const m = this.module!;
+    const fileData = m._state_file_data_new(this.e);
+    try {
+      return fn(fileData);
     } finally {
       m._file_data_delete(fileData);
     }

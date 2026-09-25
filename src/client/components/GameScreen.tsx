@@ -11,13 +11,17 @@ import { displayName } from "../emulator/rom";
 import { resetCloudRomsChoice, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
+import { lockGame, waitForGame, type GameLock } from "../saves/gameLock";
 import { resetPlayerKey } from "../saves/identity";
 import { reportScore } from "../saves/socialApi";
 import { clearCloudSyncState } from "../saves/localSaves";
+import { resumeKeeper, resumeStateFor, sramHashOf } from "../saves/resumeStates";
 import { SaveSync, type SyncStatus } from "../saves/SaveSync";
 import { CloudPanel } from "./CloudPanel";
+import { ConflictPause } from "./conflictPause";
 import { ControlsPanel } from "./ControlsPanel";
 import { FriendsPanel } from "./FriendsPanel";
+import { Modal } from "./Modal";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
@@ -35,6 +39,8 @@ type Props = {
 };
 
 const DIM_AFTER_MS = 2500;
+/** How often the spot to carry on from is snapshotted while playing, in case the tab dies before leaving cleanly. */
+const RESUME_SNAPSHOT_MS = 30_000;
 // iPhone Safari can't make a page element fullscreen, so the button is hidden there.
 const CAN_FULLSCREEN = document.fullscreenEnabled === true;
 
@@ -44,9 +50,12 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const canvas = useRef<HTMLCanvasElement>(null);
   const [emulator, setEmulator] = useState<Emulator | null>(null);
   const [sync, setSync] = useState<SaveSync | null>(null);
+  const [keepSpot, setKeepSpot] = useState<(() => Promise<void>) | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Another tab is playing this game, so this one never boots. */
+  const [openElsewhere, setOpenElsewhere] = useState(false);
   const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
   const [menu, setMenu] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -62,10 +71,24 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   // Boot: one emulator + one sync pipeline per session.
   useEffect(() => {
     let disposed = false;
+    const unmounted = new AbortController();
     const emu = createEmulator(session.rom, canvas.current!);
     let saveSync: SaveSync | null = null;
+    let lock: GameLock | null = null;
+    let remember: (() => Promise<void>) | null = null;
 
     (async () => {
+      // One tab per game, or each tab's saves overwrite the other's.
+      let held = await lockGame(session.rom.romHash);
+      if (disposed) return held?.release();
+      if (!held) {
+        // Starts here once the other tab lets go (or this tab's last session finishes saving).
+        setOpenElsewhere(true);
+        held = await waitForGame(session.rom.romHash, unmounted.signal);
+        if (disposed || !held) return held?.release();
+        setOpenElsewhere(false);
+      }
+      lock = held;
       await emu.loadRom(session.romData);
       if (disposed) return;
       if (session.save) {
@@ -78,6 +101,19 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       // A save without a clock base (new game, or made before the clock was emulated) starts its clock now.
       const rtcBase = session.save?.rtcBase ?? Date.now();
       emu.setClock?.(rtcBase);
+      // Carry on from where the game was left, unless the battery save has changed since.
+      if (emu.loadState) {
+        const resume = await sramHashOf(emu.getSram())
+          .then((sramHash) => resumeStateFor(session.rom.romHash, sramHash))
+          .catch((err: unknown) => (console.warn("Could not look up where the game was left", err), null));
+        if (disposed) return;
+        try {
+          if (resume) emu.loadState(new Uint8Array(resume));
+        } catch (err) {
+          console.warn("Could not carry on from where the game was left", err);
+        }
+      }
+      remember = resumeKeeper(emu, session.rom.romHash);
       saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase);
       saveSync.subscribe(setStatus);
       setStatus(saveSync.getStatus());
@@ -87,6 +123,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       saveSync.setPlaying(true);
       setEmulator(emu);
       setSync(saveSync);
+      setKeepSpot(() => remember);
     })().catch((err: unknown) => {
       if (disposed) return;
       console.error(err);
@@ -95,19 +132,23 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
     return () => {
       disposed = true;
-      // Stop the game at once (it keeps running until destroy(), which waits for the upload below).
+      unmounted.abort();
+      // Where the game was left. RetroArch only writes a snapshot while it runs, so the game is
+      // silenced at once but paused only once that's taken.
+      const leaving = remember?.().catch((err: unknown) => console.warn("Could not remember where the game was left", err));
+      emu.setMuted(true);
+      // Stop the game (it keeps running until destroy(), which waits for the upload below).
       // Pausing delivers the last SRAM write first, so the flush still captures it.
-      emu.pause();
-      // Capture the latest SRAM before the core goes away, then tear down.
+      const stopped = Promise.resolve(leaving).finally(() => emu.pause());
+      // Capture the latest SRAM and the snapshot before the core goes away, then tear down.
+      // The game stays locked until its last save is stored, so another tab can't boot an older one.
       const s = saveSync;
-      if (s) {
-        void s.flush().finally(() => {
-          s.destroy();
-          emu.destroy();
-        });
-      } else {
+      const l = lock;
+      void stopped.then(() => s?.flush()).finally(() => {
+        s?.destroy();
         emu.destroy();
-      }
+        l?.release();
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session
   }, [session]);
@@ -181,23 +222,36 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     // eslint-disable-next-line react-hooks/exhaustive-deps -- announce on label change only
   }, [statusKind]);
 
+  // A save conflict freezes the game until the player picks a save (see ConflictPause).
+  const inConflict = status.state === "conflict";
+  const [conflictPause] = useState(() => new ConflictPause());
+
   const setRunning = useCallback(
     (run: boolean) => {
       if (!emulator) return;
+      if (run && !conflictPause.mayRun()) return;
       if (run) emulator.start();
       else emulator.pause();
       sync?.setPlaying(run);
       setPaused(!run);
     },
-    [emulator, sync],
+    [emulator, sync, conflictPause],
   );
+
+  useEffect(() => {
+    const action = conflictPause.update(inConflict, emulator?.running ?? false);
+    if (emulator && action) setRunning(action === "resume");
+  }, [inConflict, emulator, setRunning, conflictPause]);
 
   // Pause when the tab is hidden and flush saves; resume on return.
   useEffect(() => {
     if (!emulator || !sync) return;
     let autoPaused = false;
+    const remember = () =>
+      void keepSpot?.().catch((err: unknown) => console.warn("Could not remember where the game was left", err));
     const onVisibility = () => {
       if (document.hidden) {
+        remember();
         void sync.flush();
         if (emulator.running) {
           autoPaused = true;
@@ -208,14 +262,19 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         setRunning(true);
       }
     };
-    const onPageHide = () => void sync.flush();
+    const onPageHide = () => {
+      remember();
+      void sync.flush();
+    };
+    const snapshots = setInterval(() => emulator.running && remember(), RESUME_SNAPSHOT_MS);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onPageHide);
     return () => {
+      clearInterval(snapshots);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
     };
-  }, [emulator, sync, setRunning]);
+  }, [emulator, sync, keepSpot, setRunning]);
 
   // Toolbar dims while you play and comes back on mouse move or tap.
   const dimTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -532,6 +591,21 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           current={{ romHash: session.rom.romHash, status, onDownload: downloadSave }}
           onClose={() => setPanel(null)}
         />
+      )}
+
+      {openElsewhere && (
+        <Modal labelledBy="open-elsewhere-title" role="alertdialog">
+          <h2 id="open-elsewhere-title">{title} is open in another tab</h2>
+          <p className="muted">
+            Play it in one tab at a time, so neither overwrites the other’s save. Close it in the other tab and it starts
+            here.
+          </p>
+          <div className="dialog-foot">
+            <button type="button" className="btn small primary" onClick={onEject} autoFocus>
+              Back to games
+            </button>
+          </div>
+        </Modal>
       )}
 
       {status.state === "conflict" && (

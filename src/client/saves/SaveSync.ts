@@ -67,6 +67,7 @@ export class SaveSync {
   private firstDirtyAt = 0;
   private failures = 0;
   private pushing: Promise<void> | null = null;
+  private pushAgain = false;
   private forceNext = false;
   private capturing: Promise<void> = Promise.resolve();
   private playStartedAt: number | null = null;
@@ -151,7 +152,14 @@ export class SaveSync {
     await this.capturing;
     if (this.cloudEnabled && this.local && hasUnsyncedChanges(this.local)) {
       this.clearTimer();
+      // Joining an upload under way: one owed after it (the player's keepLocal) only gets scheduled,
+      // and a teardown right after flush() would drop it. Run it now instead.
+      const joining = this.pushing !== null;
       await this.push({ keepalive: true });
+      if (joining && this.pushTimer) {
+        this.clearTimer();
+        await this.push({ keepalive: true });
+      }
     }
   }
 
@@ -210,6 +218,9 @@ export class SaveSync {
       this.setStatus({ state: "local-only" });
       return;
     }
+    // Waiting on the player's choice: this save is now the newest, so uploading it would silently
+    // replace the other device's save. Keep it on this device until they choose.
+    if (this.status.state === "conflict") return;
     this.setStatus({ state: "saved-local", at: this.local.updatedAt });
     if (!this.firstDirtyAt) this.firstDirtyAt = Date.now();
     this.schedulePush(nextPushDelay(Date.now(), this.firstDirtyAt, PUSH_TIMING));
@@ -237,14 +248,28 @@ export class SaveSync {
   }
 
   private push(options: { keepalive?: boolean } = {}): Promise<void> {
-    // One upload at a time; a later capture reschedules itself.
-    this.pushing ??= this.pushNow(options).finally(() => (this.pushing = null));
+    // One upload at a time; a request made meanwhile (e.g. the player's keepLocal) runs once it's done.
+    if (this.pushing) {
+      this.pushAgain = true;
+      return this.pushing;
+    }
+    this.pushing = this.pushNow(options).finally(() => {
+      this.pushing = null;
+      if (this.pushAgain) {
+        this.pushAgain = false;
+        this.schedulePush(0);
+      }
+    });
     return this.pushing;
   }
 
   private async pushNow(options: { keepalive?: boolean }): Promise<void> {
     const local = this.local;
-    if (!local || !this.cloudEnabled || !hasUnsyncedChanges(local)) return;
+    if (!local || !this.cloudEnabled) return;
+    if (!hasUnsyncedChanges(local)) {
+      this.forceNext = false; // Nothing left to overwrite the cloud with.
+      return;
+    }
     if (this.status.state === "conflict" && !this.forceNext) return;
     const force = this.forceNext;
     this.setStatus({ state: "syncing" });
@@ -264,7 +289,8 @@ export class SaveSync {
         options,
       );
       this.failures = 0;
-      this.forceNext = false;
+      // Only clear the force this upload used; one set while it was in flight is still owed.
+      if (force) this.forceNext = false;
       if (result.ok) {
         await this.recordCloud(result.save);
         return;
