@@ -340,20 +340,49 @@ kbd.empty { color: var(--ink-2); }
   transition: transform 90ms steps(2);
 }
 .game-card:hover { transform: translateY(-3px); }
+/* The label grows to the card's height, so every label in a row ends at the same line. */
 .game-card-play {
-  display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;
+  flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;
 }
 .game-card-play:disabled { opacity: 0.6; }
 .game-label {
-  display: flex; flex-direction: column; gap: 8px; min-height: 132px; padding: 14px; border-radius: 6px;
+  flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 132px; padding: 14px; border-radius: 6px;
   background: var(--paper); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .label-stripe { display: block; height: 5px; }
+/* Box art fills the top of the label, edge to edge (boxes are close to square, so little is cropped). */
+.game-cover {
+  display: block; width: calc(100% + 28px); max-width: none; margin: -14px -14px 0; aspect-ratio: 1;
+  object-fit: cover; border-radius: 6px 6px 0 0; background: rgba(0, 0, 0, 0.06);
+}
 .game-title { font-size: 10px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
 .game-file { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
 .game-when { display: flex; align-items: center; gap: 6px; margin-top: auto; font-size: 13px; color: var(--ink-2); }
-.game-card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.game-card-foot { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .game-card-tools { display: flex; gap: 8px; }
+
+/* Favorites turn into shiny cards: a holographic tint and a light sweep across the whole cartridge. */
+.game-card.shiny {
+  box-shadow: inset 0 2px 0 var(--shell-hi), 0 4px 0 var(--shell-deep), 0 0 0 2px rgba(255, 214, 120, 0.7),
+    0 0 22px rgba(255, 200, 90, 0.35), 0 12px 22px rgba(0, 0, 0, 0.35);
+}
+.game-card.shiny::before,
+.game-card.shiny::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+}
+.game-card.shiny::before {
+  background: linear-gradient(125deg, #ff5f6d, #ffc371, #f9f871, #7cffcb, #6ec3ff, #b98cff, #ff7eb3, #ff5f6d);
+  background-size: 300% 300%; mix-blend-mode: overlay; opacity: 0.5;
+  animation: holo 6s ease-in-out infinite alternate;
+}
+.game-card.shiny::after {
+  background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.5) 47%, rgba(255, 255, 255, 0.15) 53%, transparent 60%);
+  background-size: 250% 100%; background-repeat: no-repeat;
+  animation: sheen 3.2s ease-in-out infinite;
+}
+@keyframes holo { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+/* 100% to -5% is just off the left edge to just off the right edge, for this band and size. */
+@keyframes sheen { from { background-position: 100% 0; } 60%, to { background-position: -5% 0; } }
 
 /* Favorite star, in the top corner of the cartridge beside the grip. */
 .fav-toggle {

@@ -15,6 +15,7 @@ import {
 } from "../shared/api";
 import { isShelf } from "../shared/shelf";
 import { handleAuth } from "./auth/routes";
+import { handleCovers } from "./covers";
 import { clearSessionCookie } from "./auth/session";
 import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
 import { isCrossSite, json, methodNotAllowed, readLimited } from "./http";
@@ -39,6 +40,7 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
+ *   GET    /api/covers/*           game box art (no sign-in), see covers.ts
  *
  * Saves routes accept either an email session cookie or the anonymous player
  * key (`Authorization: Bearer <key>`); a key stops working once an account
@@ -62,6 +64,7 @@ export default {
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   if (path === "/api/health") return json({ ok: true, time: Date.now() });
+  if (path.startsWith("/api/covers/")) return handleCovers(request, path);
   if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
   if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
