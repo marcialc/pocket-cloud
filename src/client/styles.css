@@ -340,12 +340,13 @@ kbd.empty { color: var(--ink-2); }
   transition: transform 90ms steps(2);
 }
 .game-card:hover { transform: translateY(-3px); }
+/* The label grows to the card's height, so every label in a row ends at the same line. */
 .game-card-play {
-  display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;
+  flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;
 }
 .game-card-play:disabled { opacity: 0.6; }
 .game-label {
-  display: flex; flex-direction: column; gap: 8px; min-height: 132px; padding: 14px; border-radius: 6px;
+  flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 132px; padding: 14px; border-radius: 6px;
   background: var(--paper); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .label-stripe { display: block; height: 5px; }
