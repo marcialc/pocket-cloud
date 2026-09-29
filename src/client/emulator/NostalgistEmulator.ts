@@ -16,7 +16,8 @@ import type { Emulator } from "./Emulator";
  * - Input: RetroArch only takes keyboard events aimed at the canvas, and the
  *   canvas never keeps focus, so real keys don't reach it and remapping stays
  *   ours. Buttons go in through pressDown/pressUp, which need a key bind for
- *   each button in retroarch.cfg.
+ *   each button in retroarch.cfg. Controllers go the same way: RetroArch's own
+ *   joypad driver is off, so remapping them stays ours too.
  * - Audio: RetroArch makes its own AudioContext and doesn't expose it, so we
  *   catch it while the core starts to unlock, suspend and close it.
  *
@@ -289,6 +290,9 @@ export class NostalgistEmulator implements Emulator {
         ...binds,
         input_menu_toggle: "nul",
         input_menu_toggle_gamepad_combo: 0,
+        // Controllers come in through pressDown/pressUp too (see gamepad.ts). Left to
+        // RetroArch, its own joypad binds would press buttons on top of the player's.
+        input_joypad_driver: "null",
         savestate_auto_load: false,
         savestate_thumbnail_enable: false,
         // Crisp pixels; RetroArch sizes its framebuffer to the canvas in device pixels.

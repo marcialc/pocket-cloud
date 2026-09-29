@@ -157,6 +157,8 @@ describe("NostalgistEmulator", () => {
     expect(binds.sort()).toEqual(
       ["a", "b", "down", "l", "left", "r", "right", "select", "start", "up"].map((b) => `input_player1_${b}`),
     );
+    // Controllers only reach the core through our bindings.
+    expect(options.retroarchConfig.input_joypad_driver).toBe("null");
     // Nothing runs until start().
     expect(core.start).not.toHaveBeenCalled();
   });
