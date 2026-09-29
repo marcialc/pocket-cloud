@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coverFor, parseCoverIndex, sha1Hex } from "./covers";
+import { coverFor, parseCoverIndex, searchCovers, sha1Hex } from "./covers";
 
 const index = parseCoverIndex({
   games: {
@@ -21,6 +21,17 @@ describe("box art lookup", () => {
       "/api/covers/gb/Kirby's%20Dream%20Land%20(USA%2C%20Europe).png",
     );
     expect(coverFor(index, { sha1: "f".repeat(40), fileName: "kirby.gb" })).toBeNull();
+  });
+
+  it("searches box art by every word of the query", () => {
+    expect(searchCovers(index, "  pokemon  EMERALD ")).toEqual([["gba", "Pokemon - Emerald Version (USA, Europe)"]]);
+    expect(searchCovers(index, "usa")).toEqual([
+      ["gb", "Kirby's Dream Land (USA, Europe)"],
+      ["gba", "Pokemon - Emerald Version (USA, Europe)"],
+    ]);
+    expect(searchCovers(index, "usa", 1)).toHaveLength(1);
+    expect(searchCovers(index, "   ")).toEqual([]);
+    expect(searchCovers(index, "tetris")).toEqual([]);
   });
 
   it("skips entries for consoles without box art here", () => {

@@ -7,18 +7,23 @@ import {
   MAX_GROUPS,
   addGroup,
   cleanGameName,
+  gameCover,
   gameName,
   removeGroup,
   renameGame,
   renameGroup,
+  setGameCover,
   setGameGroups,
   toggleFavorite,
+  type CoverChoice,
   type Shelf,
   type ShelfGroup,
 } from "../../shared/shelf";
-import { coverFor, loadCoverIndex, type CoverIndex } from "../covers";
+import { coverUrl } from "../../shared/covers";
+import { coverFor, loadCoverIndex, searchCovers, type CoverIndex } from "../covers";
 import type { Preferences } from "../preferences";
 import { listCloudSaves } from "../saves/cloudApi";
+import { deleteCustomCover, listCustomCovers, putCustomCover, shrinkCover } from "../saves/customCovers";
 import { getLocalSave, requestPersistentStorage, storageUsage } from "../saves/localSaves";
 import type { LibraryEntry } from "../saves/romLibrary";
 import { decideLaunch } from "../saves/sync";
@@ -88,7 +93,7 @@ export function RomPicker({
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<LibraryEntry | null>(null);
-  const [renaming, setRenaming] = useState<LibraryEntry | null>(null);
+  const [editing, setEditing] = useState<LibraryEntry | null>(null);
   const [storage, setStorage] = useState<{ usage: number; persisted: boolean } | null>(null);
   const [syncByRom, setSyncByRom] = useState<Record<string, GameSync>>({});
   const [query, setQuery] = useState("");
@@ -97,6 +102,9 @@ export function RomPicker({
   const [groupName, setGroupName] = useState<{ group: ShelfGroup | null } | null>(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ShelfGroup | null>(null);
   const [covers, setCovers] = useState<CoverIndex | null>(null);
+  /** Object URLs of the images picked as covers in this browser, by ROM hash. */
+  const [customCovers, setCustomCovers] = useState<Record<string, string>>({});
+  const [customCoversVersion, setCustomCoversVersion] = useState(0);
 
   const shelf = prefs.shelf;
   // A change the shelf had no room for comes back as the same shelf.
@@ -138,6 +146,65 @@ export function RomPicker({
       live = false;
     };
   }, [hasGames, covers]);
+
+  useEffect(() => {
+    let live = true;
+    let urls: Record<string, string> = {};
+    listCustomCovers().then(
+      (all) => {
+        if (!live) return;
+        urls = Object.fromEntries(all.map((c) => [c.romHash, URL.createObjectURL(new Blob([c.data], { type: c.type }))]));
+        setCustomCovers(urls);
+      },
+      (err) => console.warn("Could not load the covers picked in this browser", err),
+    );
+    return () => {
+      live = false;
+      for (const url of Object.values(urls)) URL.revokeObjectURL(url);
+    };
+  }, [loadedLibrary, customCoversVersion]);
+
+  /** The picture on a game's card: an image picked here, then box art picked by name, then the ROM's own box art. */
+  const coverOf = (rom: LibraryEntry): string | null => {
+    const picked = gameCover(shelf, rom.romHash);
+    return customCovers[rom.romHash] ?? (picked ? coverUrl(picked.platform, picked.name) : covers && coverFor(covers, rom));
+  };
+
+  const saveEdit = async (rom: LibraryEntry, edit: GameEdit) => {
+    let next = shelf;
+    let full = false;
+    // Unchanged isn't "full": only a real change can be turned away.
+    if (cleanGameName(edit.name) !== (gameName(shelf, rom.romHash) ?? "")) {
+      const renamed = renameGame(next, rom.romHash, edit.name);
+      full ||= renamed === next;
+      next = renamed;
+    }
+    if (edit.cover.kind !== "image") {
+      const choice = edit.cover.kind === "art" ? edit.cover.choice : null;
+      const current = gameCover(shelf, rom.romHash);
+      if (choice?.platform !== current?.platform || choice?.name !== current?.name) {
+        const covered = setGameCover(next, rom.romHash, choice);
+        full ||= covered === next;
+        next = covered;
+      }
+    }
+    if (next !== shelf) onPrefs({ shelf: next });
+    setShelfFull(full);
+    setEditing(null);
+    try {
+      if (edit.cover.kind === "image" && edit.cover.blob) {
+        const { blob } = edit.cover;
+        await putCustomCover({ romHash: rom.romHash, data: await blob.arrayBuffer(), type: blob.type });
+      } else if (edit.cover.kind !== "image" && customCovers[rom.romHash]) {
+        await deleteCustomCover(rom.romHash);
+      } else {
+        return;
+      }
+      setCustomCoversVersion((v) => v + 1);
+    } catch (err) {
+      console.warn("Could not save the cover picked in this browser", err);
+    }
+  };
 
   // Per-game sync badge: compare each game's local save with the cloud list.
   useEffect(() => {
@@ -386,7 +453,7 @@ export function RomPicker({
             {shown.map((rom) => {
               const sync = syncByRom[rom.romHash];
               const favorite = favorites.has(rom.romHash);
-              const cover = covers && coverFor(covers, rom);
+              const cover = coverOf(rom);
               return (
                 <li key={rom.romHash} className={`game-card plastic${favorite ? " shiny" : ""}`}>
                   <button
@@ -440,9 +507,9 @@ export function RomPicker({
                         <button
                           type="button"
                           className="ibtn small tip"
-                          data-tip="Rename"
-                          aria-label={`Rename ${rom.title}`}
-                          onClick={() => setRenaming(rom)}
+                          data-tip="Edit name and cover"
+                          aria-label={`Edit name and cover of ${rom.title}`}
+                          onClick={() => setEditing(rom)}
                         >
                           <Icon name="pencil" size={16} />
                         </button>
@@ -514,15 +581,20 @@ export function RomPicker({
         />
       )}
 
-      {renaming && (
-        <RenameDialog
-          rom={renaming}
-          onCancel={() => setRenaming(null)}
-          onRename={(name) => {
-            // Unchanged isn't "full": only a real change goes through setShelf.
-            if (cleanGameName(name) !== (gameName(shelf, renaming.romHash) ?? "")) setShelf(renameGame(shelf, renaming.romHash, name));
-            setRenaming(null);
-          }}
+      {editing && (
+        <EditGameDialog
+          rom={editing}
+          index={covers}
+          initial={
+            customCovers[editing.romHash]
+              ? { kind: "image", url: customCovers[editing.romHash]! }
+              : gameCover(shelf, editing.romHash)
+                ? { kind: "art", choice: gameCover(shelf, editing.romHash)! }
+                : { kind: "auto" }
+          }
+          ownCover={covers && coverFor(covers, editing)}
+          onCancel={() => setEditing(null)}
+          onSave={(edit) => void saveEdit(editing, edit)}
         />
       )}
 
@@ -662,36 +734,165 @@ function RemoveDialog({
   );
 }
 
-function RenameDialog({
+/** A game's cover as the edit dialog has it: the ROM's own box art, box art picked by name, or an image (`blob` when newly picked). */
+type CoverDraft = { kind: "auto" } | { kind: "art"; choice: CoverChoice } | { kind: "image"; url: string; blob?: Blob };
+type GameEdit = { name: string; cover: CoverDraft };
+
+const PLATFORM_LABELS = { gb: "GB", gbc: "GBC", gba: "GBA" } as const;
+
+function EditGameDialog({
   rom,
-  onRename,
+  index,
+  initial,
+  ownCover,
+  onSave,
   onCancel,
 }: {
   rom: LibraryEntry;
-  onRename: (name: string) => void;
+  /** Box art list to search, or null while it loads. */
+  index: CoverIndex | null;
+  initial: CoverDraft;
+  /** The box art found for the ROM itself, if any. */
+  ownCover: string | null;
+  onSave: (edit: GameEdit) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(rom.title);
+  const [cover, setCover] = useState<CoverDraft>(initial);
+  const [query, setQuery] = useState("");
+  const [imageError, setImageError] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const results = index && query.trim().length >= 2 ? searchCovers(index, query) : [];
+
+  // Images picked here and then replaced or never saved.
+  const pickedUrls = useRef<string[]>([]);
+  useEffect(() => () => pickedUrls.current.forEach((url) => URL.revokeObjectURL(url)), []);
+
+  const pickImage = async (picked: File | undefined) => {
+    if (!picked) return;
+    try {
+      const blob = await shrinkCover(picked);
+      const url = URL.createObjectURL(blob);
+      pickedUrls.current.push(url);
+      setCover({ kind: "image", url, blob });
+      setImageError(null);
+    } catch {
+      setImageError("That file couldn’t be opened as an image. Try a PNG or JPEG.");
+    }
+  };
+
+  const preview =
+    cover.kind === "image" ? cover.url : cover.kind === "art" ? coverUrl(cover.choice.platform, cover.choice.name) : ownCover;
+  const hue = hueFor(rom.romHash);
+
   return (
-    <Modal labelledBy="rename-title" onClose={onCancel}>
+    <Modal labelledBy="edit-title" onClose={onCancel}>
       <form
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          onRename(name);
+          onSave({ name, cover });
         }}
       >
-        <h2 id="rename-title">Rename game</h2>
-        <p className="muted">Only changes the name shown, in your list and while playing. Saves are not affected. Leave it blank to use the cartridge name.</p>
-        <input
-          className="field"
-          value={name}
-          maxLength={MAX_GAME_NAME}
-          autoFocus
-          onFocus={(e) => e.target.select()}
-          onChange={(e) => setName(e.target.value)}
-          aria-label="Game name"
-        />
+        <h2 id="edit-title">Edit game</h2>
+        <label className="stack-sm">
+          <span className="field-label">Name</span>
+          <input
+            className="field"
+            value={name}
+            maxLength={MAX_GAME_NAME}
+            autoFocus
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <small className="fine">Leave it blank to use the cartridge name. Saves are not affected.</small>
+        </label>
+
+        <div className="stack-sm">
+          <span className="field-label">Cover</span>
+          <div className="cover-edit">
+            <span className="cover-preview">
+              {preview ? <CoverArt key={preview} src={preview} hue={hue} /> : <span className="label-stripe" style={{ background: hue }} />}
+            </span>
+            <div className="stack-sm">
+              <p className="fine" aria-live="polite">
+                {cover.kind === "auto"
+                  ? ownCover
+                    ? "The box art found for this game."
+                    : "No box art found for this game."
+                  : cover.kind === "art"
+                    ? cover.choice.name
+                    : "Your image. Only shows in this browser."}
+              </p>
+              <div className="row">
+                <button type="button" className="btn small" onClick={() => file.current?.click()}>
+                  <Icon name="upload" size={14} /> Upload image
+                </button>
+                {cover.kind !== "auto" && (
+                  <button type="button" className="btn small" onClick={() => setCover({ kind: "auto" })}>
+                    Use automatic
+                  </button>
+                )}
+              </div>
+              <input
+                ref={file}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  void pickImage(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          </div>
+          {imageError && (
+            <p className="error" role="alert">
+              {imageError}
+            </p>
+          )}
+          <label className="search-field">
+            <Icon name="search" size={18} />
+            <input
+              className="field"
+              type="search"
+              value={query}
+              placeholder={index ? "Search box art, e.g. pokemon crystal" : "Loading box art…"}
+              disabled={!index}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter saves the dialog from the name field, not from here.
+                if (e.key === "Enter") e.preventDefault();
+              }}
+              aria-label="Search box art"
+            />
+          </label>
+          {query.trim().length >= 2 && index && (
+            <ul className="cover-results" aria-label="Box art results">
+              {results.length ? (
+                results.map(([platform, art]) => {
+                  const on = cover.kind === "art" && cover.choice.platform === platform && cover.choice.name === art;
+                  return (
+                    <li key={`${platform}:${art}`}>
+                      <button
+                        type="button"
+                        className="cover-result"
+                        aria-pressed={on}
+                        onClick={() => setCover({ kind: "art", choice: { platform, name: art } })}
+                      >
+                        <span>{art}</span>
+                        <span className="cover-platform">{PLATFORM_LABELS[platform]}</span>
+                      </button>
+                    </li>
+                  );
+                })
+              ) : (
+                <li className="fine">No box art matches “{query.trim()}”.</li>
+              )}
+            </ul>
+          )}
+        </div>
+
         <div className="dialog-foot">
           <button type="button" className="btn small" onClick={onCancel}>
             Cancel

@@ -6,12 +6,14 @@ import {
   MAX_SHELF_BYTES,
   addGroup,
   forgetGame,
+  gameCover,
   gameName,
   isShelf,
   removeGroup,
   renameGame,
   renameGroup,
   sanitizeShelf,
+  setGameCover,
   setGameGroups,
   shelfBytes,
   toggleFavorite,
@@ -79,9 +81,24 @@ describe("library shelf", () => {
     expect(forgetGame(forgetGame(shelf, A), B)).toEqual(EMPTY_SHELF);
   });
 
+  it("picks box art for games, and null goes back to the ROM's own", () => {
+    const crystal = { platform: "gbc", name: "Pokemon - Crystal Version (USA, Europe)" } as const;
+    const picked = setGameCover(EMPTY_SHELF, A, crystal);
+    expect(picked.covers).toEqual({ [A]: "gbc:Pokemon - Crystal Version (USA, Europe)" });
+    expect(gameCover(picked, A)).toEqual(crystal);
+    expect(gameCover(picked, B)).toBeUndefined();
+    expect(setGameCover(picked, A, { ...crystal })).toBe(picked);
+    expect(setGameCover(picked, A, { platform: "gbc", name: "a/b" })).toBe(picked);
+    expect(setGameCover(picked, A, null)).toEqual(EMPTY_SHELF);
+    const both = renameGame(setGameCover(picked, B, crystal), A, "Crystal");
+    expect(forgetGame(both, A)).toEqual({ favorites: [], groups: [], covers: { [B]: "gbc:Pokemon - Crystal Version (USA, Europe)" } });
+    expect(forgetGame(forgetGame(both, A), B)).toEqual(EMPTY_SHELF);
+  });
+
   it("validates stored shelves", () => {
     expect(isShelf({ favorites: [A], groups: [{ id: "g1", name: "One", roms: [B] }] })).toBe(true);
     expect(isShelf({ favorites: [], groups: [], names: { [A]: "Crystal Clear" } })).toBe(true);
+    expect(isShelf({ favorites: [], groups: [], covers: { [A]: "gba:Pokemon - Emerald Version (USA, Europe)" } })).toBe(true);
     for (const bad of [
       null,
       [],
@@ -92,6 +109,10 @@ describe("library shelf", () => {
       { favorites: [], groups: [], names: [] },
       { favorites: [], groups: [], names: { nope: "x" } },
       { favorites: [], groups: [], names: { [A]: " " } },
+      { favorites: [], groups: [], covers: { [A]: "Pokemon" } },
+      { favorites: [], groups: [], covers: { [A]: "nes:Pokemon" } },
+      { favorites: [], groups: [], covers: { [A]: "gb:../x" } },
+      { favorites: [], groups: [], covers: { nope: "gb:Tetris" } },
       { favorites: [], groups: [], names: { [A]: "x".repeat(MAX_GAME_NAME + 1) } },
       { favorites: [], groups: [{ id: "g1", name: "x".repeat(41), roms: [] }] },
       { favorites: [], groups: [{ id: "g1", name: "x", roms: [42] }] },

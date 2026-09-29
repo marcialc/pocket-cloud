@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
+import { gameName } from "../../shared/shelf";
 import type { Preferences } from "../preferences";
 import { authErrorMessage, fetchAccount } from "../saves/authApi";
 import { deleteCloudSave, fetchCloudSave, listCloudSaves } from "../saves/cloudApi";
@@ -60,7 +61,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
   }, [prefs.cloudSync]);
   useEffect(refresh, [refresh]);
 
-  const nameOf = (s: CloudSaveMeta) => titles[s.romHash] ?? s.gameId;
+  const nameOf = (s: CloudSaveMeta) => gameName(prefs.shelf, s.romHash) ?? titles[s.romHash] ?? s.gameId;
 
   const download = async (s: CloudSaveMeta) => {
     try {

@@ -1,13 +1,22 @@
 import { HASH_PATTERN } from "./api";
+import { isCoverName, isCoverPlatform, type CoverPlatform } from "./covers";
 
 /**
  * How the player organizes their game library: favorite games (listed first),
- * named groups, and names they gave games (`names`, by ROM hash; missing when
- * there are none). Games are referenced by ROM hash, so this follows the
+ * named groups, names they gave games (`names`, by ROM hash; missing when
+ * there are none) and box art they picked for games (`covers`, the same way, as
+ * "<platform>:<No-Intro name>"). Games are referenced by ROM hash, so this follows the
  * account to other devices whether or not they have the ROM yet.
  */
 export type ShelfGroup = { id: string; name: string; roms: string[] };
-export type Shelf = { favorites: string[]; groups: ShelfGroup[]; names?: Record<string, string> };
+export type Shelf = {
+  favorites: string[];
+  groups: ShelfGroup[];
+  names?: Record<string, string>;
+  covers?: Record<string, string>;
+};
+/** Box art the player picked for a game, by its No-Intro name. */
+export type CoverChoice = { platform: CoverPlatform; name: string };
 
 export const EMPTY_SHELF: Shelf = { favorites: [], groups: [] };
 
@@ -48,13 +57,27 @@ function isNameMap(value: unknown): value is Record<string, string> {
   );
 }
 
+function isCoverMap(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= MAX_LIST_GAMES && entries.every(([h, c]) => HASH_PATTERN.test(h) && typeof c === "string" && !!parseCover(c));
+}
+
+function parseCover(value: string): CoverChoice | null {
+  const at = value.indexOf(":");
+  const platform = value.slice(0, at);
+  const name = value.slice(at + 1);
+  return at > 0 && isCoverPlatform(platform) && isCoverName(name) ? { platform, name } : null;
+}
+
 /** Structural check for a stored shelf. */
 export function isShelf(value: unknown): value is Shelf {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const { favorites, groups, names } = value as Record<string, unknown>;
+  const { favorites, groups, names, covers } = value as Record<string, unknown>;
   return (
     isHashList(favorites) &&
     (names === undefined || isNameMap(names)) &&
+    (covers === undefined || isCoverMap(covers)) &&
     Array.isArray(groups) &&
     groups.length <= MAX_GROUPS &&
     groups.every(
@@ -151,17 +174,50 @@ function withNames(shelf: Shelf, names: Record<string, string>): Shelf {
   return kept.length > 0 ? { ...rest, names: Object.fromEntries(kept) } : rest;
 }
 
-/** The game left the library for good: drop it from favorites and groups, and forget its name. */
+/** The box art the player picked for this game, if any. */
+export function gameCover(shelf: Shelf, romHash: string): CoverChoice | undefined {
+  const value = shelf.covers?.[romHash];
+  return (value && parseCover(value)) || undefined;
+}
+
+/**
+ * Picks the game's box art; null goes back to the art found for the ROM itself.
+ * Returns the shelf unchanged if nothing changes, or if the shelf is full.
+ */
+export function setGameCover(shelf: Shelf, romHash: string, cover: CoverChoice | null): Shelf {
+  const value = cover ? `${cover.platform}:${cover.name}` : "";
+  if ((shelf.covers?.[romHash] ?? "") === value) return shelf;
+  return checked(shelf, withCovers(shelf, { ...shelf.covers, [romHash]: value }));
+}
+
+/** The shelf with these covers, leaving out blank ones (and the field itself when none are left). */
+function withCovers(shelf: Shelf, covers: Record<string, string>): Shelf {
+  const { covers: _previous, ...rest } = shelf;
+  const kept = Object.entries(covers).filter(([, c]) => c.length > 0);
+  return kept.length > 0 ? { ...rest, covers: Object.fromEntries(kept) } : rest;
+}
+
+/** The game left the library for good: drop it from favorites and groups, and forget its name and box art. */
 export function forgetGame(shelf: Shelf, romHash: string): Shelf {
-  if (!isFavorite(shelf, romHash) && !shelf.groups.some((g) => g.roms.includes(romHash)) && gameName(shelf, romHash) === undefined) {
+  if (
+    !isFavorite(shelf, romHash) &&
+    !shelf.groups.some((g) => g.roms.includes(romHash)) &&
+    gameName(shelf, romHash) === undefined &&
+    shelf.covers?.[romHash] === undefined
+  ) {
     return shelf;
   }
-  return withNames(
-    {
-      favorites: shelf.favorites.filter((h) => h !== romHash),
-      groups: shelf.groups.map((g) => ({ ...g, roms: g.roms.filter((h) => h !== romHash) })),
-    },
-    { ...shelf.names, [romHash]: "" },
+  const { names: _names, covers: _covers, ...rest } = shelf;
+  return withCovers(
+    withNames(
+      {
+        ...rest,
+        favorites: shelf.favorites.filter((h) => h !== romHash),
+        groups: shelf.groups.map((g) => ({ ...g, roms: g.roms.filter((h) => h !== romHash) })),
+      },
+      { ...shelf.names, [romHash]: "" },
+    ),
+    { ...shelf.covers, [romHash]: "" },
   );
 }
 

@@ -14,6 +14,7 @@ import { RomError, displayName, inspectRom, type RomInfo } from "./emulator/rom"
 import { loadPreferences, resetCloudRomsChoice, savePreferences, type Preferences } from "./preferences";
 import { fetchAccount, signOut } from "./saves/authApi";
 import { deleteCloudRom, downloadCloudRom, listCloudRoms } from "./saves/cloudApi";
+import { deleteCustomCover } from "./saves/customCovers";
 import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
 import { forgetUnsyncedShelf, pushShelf, syncShelf } from "./saves/shelfSync";
@@ -432,6 +433,7 @@ export function App() {
         const { shelf } = loadPreferences();
         const next = forgetGame(shelf, romHash);
         if (next !== shelf) updatePrefs({ shelf: next });
+        await deleteCustomCover(romHash).catch((err) => console.warn("Could not forget the cover picked for the game", err));
       }
       refreshLibrary();
     },

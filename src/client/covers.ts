@@ -54,3 +54,15 @@ export async function sha1Hex(data: ArrayBuffer | Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-1", data as BufferSource);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** Box art whose No-Intro name contains every word of the query, shortest names first. */
+export function searchCovers(index: CoverIndex, query: string, limit = 20): [CoverPlatform, string][] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const found: [CoverPlatform, string][] = [];
+  for (const [name, platform] of index.byName) {
+    const lower = name.toLowerCase();
+    if (words.every((w) => lower.includes(w))) found.push([platform, name]);
+  }
+  return found.sort((a, b) => a[1].length - b[1].length || a[1].localeCompare(b[1])).slice(0, limit);
+}
