@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_PAD_BINDINGS } from "./emulator/gamepad";
 import { DEFAULT_KEY_BINDINGS, rebind } from "./emulator/keyBindings";
 import { loadPreferences, savePreferences } from "./preferences";
 
@@ -19,6 +20,13 @@ afterEach(() => vi.unstubAllGlobals());
 describe("preferences", () => {
   it("starts with every platform's default controls", () => {
     expect(loadPreferences().controls).toEqual(DEFAULT_KEY_BINDINGS);
+  });
+
+  it("keeps remapped controller buttons, with defaults for the rest", () => {
+    expect(loadPreferences().padControls).toEqual(DEFAULT_PAD_BINDINGS);
+    const padControls = { ...DEFAULT_PAD_BINDINGS, gb: rebind(DEFAULT_PAD_BINDINGS.gb, "a", 0) };
+    savePreferences({ ...loadPreferences(), padControls });
+    expect(loadPreferences().padControls).toEqual(padControls);
   });
 
   it("turns the controls saved before other platforms into the Game Boy's", () => {

@@ -211,6 +211,8 @@ kbd {
 }
 kbd.listening { background: var(--lcd-light); color: var(--lcd-dark); animation: fade 800ms steps(2) infinite; }
 kbd.empty { color: var(--ink-2); }
+/* Matches the pixel font's cap height; crisp edges keep it blocky like the ↑ glyph. */
+.key-arrow { display: inline-block; width: 0.9em; height: 0.9em; vertical-align: -0.05em; shape-rendering: crispEdges; }
 
 /* ---------- Status badges ---------- */
 .badge {
@@ -533,6 +535,8 @@ kbd.empty { color: var(--ink-2); }
 .hw-pill { border-radius: 999px; background: #7d776b; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 2px 0 #55504a; transform: rotate(-25deg); }
 .hw-pill:active { transform: rotate(-25deg) translateY(2px); }
 .hw-shoulder { border-radius: 8px 8px 3px 3px; background: #7d776b; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 2px 0 #55504a; }
+.hw.pressed { transform: translateY(2px); filter: brightness(1.45); }
+.hw-pill.pressed { transform: rotate(-25deg) translateY(2px); }
 .hw.listen { outline: 3px solid var(--accent); outline-offset: 4px; animation: ring 700ms steps(2) infinite; }
 @keyframes ring { 50% { outline-color: transparent; } }
 .hw-label { position: absolute; font: 9px var(--pixel); color: var(--ink-2); pointer-events: none; }

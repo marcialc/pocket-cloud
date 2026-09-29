@@ -14,6 +14,7 @@ const PATHS = {
   soundOff: "M4 9h4l5-4v14l-5-4H4zM16 9l6 6M22 9l-6 6",
   fullscreen: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
   gamepad: "M7 8h10a5 5 0 0 1 0 10l-2-2H9l-2 2A5 5 0 0 1 7 8zM8 11v4M6 13h4M16 12h.01M18 14h.01",
+  keyboard: "M3 7h18v11H3zM7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14.5h8",
   user: "M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21a8 8 0 0 1 16 0",
   close: "M6 6l12 12M18 6 6 18",
   lock: "M5 11h14v10H5zM8 11V8a4 4 0 0 1 8 0v3",
@@ -51,6 +52,28 @@ export function Icon({ name, size = 20, className }: { name: IconName; size?: nu
     >
       <path d={PATHS[name]} />
     </svg>
+  );
+}
+
+const ARROW_TURNS: Record<string, number> = { "↑": 0, "→": 90, "↓": 180, "←": 270 };
+
+/**
+ * A key or button name for a <kbd>. The pixel font has ↑ and ↓ but not ← and →,
+ * which would fall back to a thin system glyph, so all four are drawn instead.
+ */
+export function KeyName({ name }: { name: string }) {
+  return (
+    <>
+      {name.split(/([↑→↓←])/).map((part, i) =>
+        ARROW_TURNS[part] === undefined ? (
+          part
+        ) : (
+          <svg key={i} className="key-arrow" viewBox="0 0 8 8" role="img" aria-label={part} focusable="false">
+            <path d="M4 0 8 4H5.5V8h-3V4H0z" fill="currentColor" transform={`rotate(${ARROW_TURNS[part]} 4 4)`} />
+          </svg>
+        ),
+      )}
+    </>
   );
 }
 

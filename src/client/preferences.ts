@@ -1,4 +1,5 @@
 import { EMPTY_SHELF, sanitizeShelf, type Shelf } from "../shared/shelf";
+import { DEFAULT_PAD_BINDINGS, sanitizeAllPadBindings, type AllPadBindings } from "./emulator/gamepad";
 import { DEFAULT_KEY_BINDINGS, customPlatformBindings, sanitizeAllBindings, type AllKeyBindings } from "./emulator/keyBindings";
 
 /** Small per-device UI preferences (localStorage). */
@@ -14,6 +15,8 @@ export type Preferences = {
   muted: boolean;
   /** Keyboard controls per platform. */
   controls: AllKeyBindings;
+  /** Game controller buttons per platform. Only on this device. */
+  padControls: AllPadBindings;
   /** Chose "Continue without signing in" on the welcome screen; don't show it again. */
   skipSignIn: boolean;
   /** Soft clicks on menu buttons. Off by default. */
@@ -36,6 +39,7 @@ const DEFAULTS: Preferences = {
   volume: 0.6,
   muted: false,
   controls: DEFAULT_KEY_BINDINGS,
+  padControls: DEFAULT_PAD_BINDINGS,
   skipSignIn: false,
   uiSounds: false,
   reduceMotion: false,
@@ -54,6 +58,7 @@ export function loadPreferences(): Preferences {
       ...DEFAULTS,
       ...stored,
       controls: sanitizeAllBindings({ ...stored.controls, ...(keyBindings ? { gb: keyBindings } : {}) }),
+      padControls: sanitizeAllPadBindings(stored.padControls),
       shelf: sanitizeShelf(stored.shelf ?? EMPTY_SHELF),
       screenSize: clampScreenSize(stored.screenSize),
     };

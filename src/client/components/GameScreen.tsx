@@ -3,6 +3,7 @@ import type { Session } from "../App";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
+import { bindGamepads } from "../emulator/gamepad";
 import { createEmulator } from "../emulator/createEmulator";
 import type { Emulator } from "../emulator/Emulator";
 import { scoreWatcherFor } from "../emulator/scoreWatch";
@@ -67,6 +68,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const platform = PLATFORMS[session.rom.platform];
   const { width: LCD_W, height: LCD_H } = platform.screen;
   const bindings = prefs.controls[platform.controls];
+  const padBindings = prefs.padControls[platform.controls];
 
   // Boot: one emulator + one sync pipeline per session.
   useEffect(() => {
@@ -182,6 +184,12 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   // Keyboard input; re-bound whenever the player remaps keys.
   useEffect(() => (emulator ? bindKeyboard(emulator, bindings) : undefined), [emulator, bindings]);
+  // Game controllers (Gamepad API). Like keys, they don't reach the game while the
+  // Controls panel is open, where they light up its drawing and get remapped.
+  useEffect(
+    () => (emulator && panel !== "controls" ? bindGamepads(emulator, padBindings) : undefined),
+    [emulator, panel, padBindings],
+  );
 
   // Mirror preferences into the running emulator / sync loop.
   useEffect(() => {
@@ -569,9 +577,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       {panel === "controls" && (
         <ControlsPanel
           bindings={prefs.controls}
+          padBindings={prefs.padControls}
           platform={session.rom.platform}
           signedIn={signedIn}
           onChange={(controls) => onPrefs({ controls })}
+          onPadChange={(padControls) => onPrefs({ padControls })}
           onClose={() => setPanel(null)}
         />
       )}

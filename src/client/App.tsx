@@ -502,8 +502,10 @@ export function App() {
           {panel === "controls" && (
             <ControlsPanel
               bindings={prefs.controls}
+              padBindings={prefs.padControls}
               signedIn={!!account}
               onChange={(controls) => updatePrefs({ controls })}
+              onPadChange={(padControls) => updatePrefs({ padControls })}
               onClose={() => setPanel(null)}
             />
           )}

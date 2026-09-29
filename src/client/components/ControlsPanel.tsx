@@ -1,16 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { CONTROLS_IDS, PLATFORM_IDS, PLATFORMS, buttonLabel, type Button, type ControlsId, type PlatformId } from "../../shared/platforms";
-import { DEFAULT_KEY_BINDINGS, isBindable, keyLabel, rebind, sameBindings, type AllKeyBindings } from "../emulator/keyBindings";
-import { Icon } from "./icons";
+import {
+  DEFAULT_PAD_BINDINGS,
+  heldButtons,
+  padButtonName,
+  padName,
+  pollGamepads,
+  pressedIndexes,
+  type AllPadBindings,
+  type PadBindings,
+} from "../emulator/gamepad";
+import { DEFAULT_KEY_BINDINGS, isBindable, keyLabel, keyMap, rebind, sameBindings, type AllKeyBindings, type KeyBindings } from "../emulator/keyBindings";
+import { Icon, KeyName } from "./icons";
 import { SidePanel } from "./SidePanel";
 
 type Props = {
   bindings: AllKeyBindings;
+  /** Game controller buttons; remapped here too while a controller is connected. */
+  padBindings: AllPadBindings;
   /** The game being played: its platform's controls. Left out on the start screen, where the player picks. */
   platform?: PlatformId;
   /** Signed in: changes are saved to the account, not just this device. */
   signedIn: boolean;
   onChange: (bindings: AllKeyBindings) => void;
+  onPadChange: (bindings: AllPadBindings) => void;
   onClose: () => void;
 };
 
@@ -74,18 +87,101 @@ function spotOf(buttons: readonly Button[], button: Button): Spot {
 
 type Notice = { tone: "warn" | "info"; text: string };
 
-/** Remap keyboard keys. Pick a button (diagram or list), press a key; Esc cancels. */
-export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onChangeAll, onClose }: Props) {
+function sameSet<T>(a: Set<T>, b: Set<T>): boolean {
+  return a.size === b.size && [...a].every((x) => b.has(x));
+}
+
+/**
+ * Remap keyboard keys and, with one connected, a game controller's buttons.
+ * Pick a button (diagram or list), then press a key or controller button; Esc
+ * cancels. Keys and controller buttons being held light up on the diagram.
+ */
+export function ControlsPanel({
+  bindings: all,
+  padBindings: allPad,
+  platform,
+  signedIn,
+  onChange: onChangeAll,
+  onPadChange: onPadChangeAll,
+  onClose,
+}: Props) {
   const [picked, setPicked] = useState<ControlsId>(PLAYABLE[0] ?? "gb");
   const controls = platform ? PLATFORMS[platform].controls : picked;
   const buttons = PLATFORMS[controls].buttons;
   const bindings = all[controls];
-  const onChange = (next: typeof bindings) => onChangeAll({ ...all, [controls]: next });
+  const padBindings = allPad[controls];
+  const onChange = (next: KeyBindings) => onChangeAll({ ...all, [controls]: next });
+  const onPadChange = (next: PadBindings) => onPadChangeAll({ ...allPad, [controls]: next });
   const label = (button: Button) => buttonLabel(controls, button);
   const [listening, setListening] = useState<Button | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   // The keyup of the key just bound must not "click" the focused button (Space/Enter).
   const swallowUp = useRef<string | null>(null);
+  const [keysHeld, setKeysHeld] = useState<Set<Button>>(new Set());
+  const [padsHeld, setPadsHeld] = useState<Set<Button>>(new Set());
+  const [padInfo, setPadInfo] = useState<Pick<Gamepad, "id" | "mapping"> | null>(null);
+  const [source, setSource] = useState<"keyboard" | "controller">("keyboard");
+  // Falls back to the keys if the controller goes away.
+  const showPad = source === "controller" && padInfo !== null;
+  const noun = showPad ? "button" : "key";
+
+  /** Makes `code` (a key or controller button, called `name`) the only one for the button being picked. */
+  function assign<T>(current: Partial<Record<Button, T[]>>, code: T, name: string, write: (next: Partial<Record<Button, T[]>>) => void) {
+    if (!listening) return;
+    const stolenFrom = buttons.find((b) => b !== listening && current[b]?.includes(code));
+    const next = rebind(current, listening, code);
+    write(next);
+    if (stolenFrom) {
+      const orphan = next[stolenFrom]?.length === 0;
+      setNotice({
+        tone: "warn",
+        text: `${name[0]!.toUpperCase()}${name.slice(1)} was already used by ${label(stolenFrom)}, so it moved to ${label(listening)}.${
+          orphan ? ` ${label(stolenFrom)} has no ${noun} now; pick one for it.` : ""
+        }`,
+      });
+    } else {
+      setNotice({ tone: "info", text: `${label(listening)} is now ${name}.` });
+    }
+    setListening(null);
+  }
+
+  // The poll below runs for the panel's whole life; these hand it the current render's values.
+  const padBindingsRef = useRef(padBindings);
+  padBindingsRef.current = padBindings;
+  const onPadPress = useRef<(pad: Gamepad, index: number) => void>(() => {});
+  onPadPress.current = (pad, index) => {
+    if (showPad && listening) assign(padBindings, index, `the controller's ${padButtonName(pad, index)}`, onPadChange);
+  };
+
+  useEffect(() => {
+    // Controller buttons held last frame, as "pad:button", so only fresh presses bind.
+    let down = new Set<string>();
+    return pollGamepads((pads) => {
+      const first = pads[0];
+      setPadInfo((prev) =>
+        prev?.id === first?.id && prev?.mapping === first?.mapping ? prev : first ? { id: first.id, mapping: first.mapping } : null,
+      );
+      const held = heldButtons(pads, padBindingsRef.current);
+      setPadsHeld((prev) => (sameSet(prev, held) ? prev : held));
+      const now = new Set<string>();
+      let fresh: [Gamepad, number] | null = null;
+      for (const pad of pads)
+        for (const i of pressedIndexes(pad)) {
+          const k = `${pad.index}:${i}`;
+          now.add(k);
+          if (!down.has(k)) fresh ??= [pad, i];
+        }
+      down = now;
+      // One per frame: the next only sees the new bindings after a render.
+      if (fresh) onPadPress.current(...fresh);
+    });
+  }, []);
+
+  useEffect(() => {
+    const clear = () => setKeysHeld(new Set());
+    window.addEventListener("blur", clear);
+    return () => window.removeEventListener("blur", clear);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -97,6 +193,16 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
       // Capture phase + stopImmediatePropagation: while this panel is open the
       // game never sees keys, so pressing a key here can't also press it in-game.
       e.stopImmediatePropagation();
+      // Light up the button the key drives (keyup always, so nothing stays lit after a rebind).
+      const held = keyMap(bindings).get(e.code);
+      if (held && (e.type === "keyup" || !listening))
+        setKeysHeld((prev) => {
+          if (prev.has(held) === (e.type === "keydown")) return prev;
+          const next = new Set(prev);
+          if (e.type === "keydown") next.add(held);
+          else next.delete(held);
+          return next;
+        });
       if (e.type === "keyup" && swallowUp.current === e.code) {
         e.preventDefault();
         swallowUp.current = null;
@@ -112,28 +218,16 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
       swallowUp.current = e.code;
       if (e.code === "Escape") {
         setListening(null);
-        setNotice({ tone: "info", text: `Cancelled. ${label(listening)} keeps its key.` });
+        setNotice({ tone: "info", text: `Cancelled. ${label(listening)} keeps its ${noun}.` });
         return;
       }
+      // Waiting for a controller button: other keys do nothing.
+      if (showPad) return;
       if (!isBindable(e.code)) {
         setNotice({ tone: "warn", text: `${e.key} is reserved for the browser. Pick another key.` });
         return;
       }
-      const stolenFrom = buttons.find((b) => b !== listening && bindings[b]?.includes(e.code));
-      const next = rebind(bindings, listening, e.code);
-      onChange(next);
-      if (stolenFrom) {
-        const orphan = next[stolenFrom]?.length === 0;
-        setNotice({
-          tone: "warn",
-          text: `${keyLabel(e.code)} was already used by ${label(stolenFrom)}, so it moved to ${label(listening)}.${
-            orphan ? ` ${label(stolenFrom)} has no key now; pick one for it.` : ""
-          }`,
-        });
-      } else {
-        setNotice({ tone: "info", text: `${label(listening)} is now ${keyLabel(e.code)}.` });
-      }
-      setListening(null);
+      assign(bindings, e.code, keyLabel(e.code), onChange);
     };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", onKey, true);
@@ -141,7 +235,7 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("keyup", onKey, true);
     };
-  }, [listening, bindings, onChange, onClose]);
+  }, [listening, bindings, showPad, onChange, onClose]);
 
   const pick = (button: Button) => {
     setNotice(null);
@@ -149,7 +243,17 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
     document.getElementById(`bind-${button}`)?.focus();
   };
 
-  const unbound = buttons.filter((b) => !bindings[b]?.length);
+  /** What drives `button` in the view shown: key names, or controller button names. */
+  const names = (button: Button): string[] =>
+    showPad
+      ? // A standard pad's D-pad buttons and a hat's directions share a name.
+        [...new Set((padBindings[button] ?? []).map((i) => padButtonName(padInfo, i)))]
+      : (bindings[button] ?? []).map(keyLabel);
+  const unbound = buttons.filter((b) => names(b).length === 0);
+  const pressed = (b: Button) => keysHeld.has(b) || padsHeld.has(b);
+  const atDefaults = showPad
+    ? sameBindings(padBindings, DEFAULT_PAD_BINDINGS[controls])
+    : sameBindings(bindings, DEFAULT_KEY_BINDINGS[controls]);
 
   return (
     <SidePanel
@@ -162,11 +266,12 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
           <button
             type="button"
             className="btn small"
-            disabled={sameBindings(bindings, DEFAULT_KEY_BINDINGS[controls])}
+            disabled={atDefaults}
             onClick={() => {
-              onChange(DEFAULT_KEY_BINDINGS[controls]);
+              if (showPad) onPadChange(DEFAULT_PAD_BINDINGS[controls]);
+              else onChange(DEFAULT_KEY_BINDINGS[controls]);
               setListening(null);
-              setNotice({ tone: "info", text: "Restored the default keys." });
+              setNotice({ tone: "info", text: showPad ? "Restored the default controller buttons." : "Restored the default keys." });
             }}
           >
             Reset to defaults
@@ -177,9 +282,34 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
         </>
       }
     >
-      <p className="muted">Pick a button on the handheld or in the list, then press the key you want for it.{" "}
-        {signedIn ? "Saved to your account." : "Saved on this device."}
-      </p>
+      {showPad ? (
+        <p className="muted">Pick a button on the handheld or in the list, then press the controller button you want for it. Saved on this device.</p>
+      ) : (
+        <p className="muted">Pick a button on the handheld or in the list, then press the key you want for it.{" "}
+          {signedIn ? "Saved to your account." : "Saved on this device."}
+        </p>
+      )}
+
+      {padInfo && (
+        <div className="chips" role="group" aria-label="Input">
+          {(["keyboard", "controller"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="chip"
+              aria-pressed={(s === "controller") === showPad}
+              onClick={() => {
+                setSource(s);
+                setListening(null);
+                setNotice(null);
+              }}
+            >
+              <Icon name={s === "controller" ? "gamepad" : "keyboard"} size={16} />
+              <span className="chip-label">{s === "controller" ? padName(padInfo.id) : "Keyboard"}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {!platform && PLAYABLE.length > 1 && (
         <div className="chips" role="group" aria-label="Console">
@@ -210,9 +340,9 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
             <button
               key={b}
               type="button"
-              className={`hw hw-${d.shape}${listening === b ? " listen" : ""}`}
+              className={`hw hw-${d.shape}${listening === b ? " listen" : ""}${pressed(b) ? " pressed" : ""}`}
               style={at(d.x, d.y, d.w, d.h)}
-              aria-label={`${label(b)} button, set to ${describeKeys(bindings[b] ?? [])}. Activate to change.`}
+              aria-label={`${label(b)} button, set to ${describeKeys(names(b), noun)}. Activate to change.`}
               onClick={() => pick(b)}
             />
           );
@@ -233,14 +363,14 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
         <div className={`notice ${notice?.tone ?? "warn"}`} role="status">
           <Icon name={notice?.tone === "info" ? "info" : "warn"} size={18} />
           <span>
-            {notice?.text ?? `${unbound.map((b) => label(b)).join(", ")} ${unbound.length > 1 ? "have" : "has"} no key.`}
+            {notice?.text ?? `${unbound.map((b) => label(b)).join(", ")} ${unbound.length > 1 ? "have" : "has"} no ${noun}.`}
           </span>
         </div>
       )}
 
       <ul className="bind-list">
         {listOrder(buttons).map((button) => {
-          const keys = bindings[button] ?? [];
+          const keys = names(button);
           const active = listening === button;
           return (
             <li key={button}>
@@ -251,8 +381,8 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
                 onClick={() => pick(button)}
                 aria-label={
                   active
-                    ? `Waiting for a key for ${label(button)}. Escape cancels.`
-                    : `${label(button)}, set to ${describeKeys(keys)}. Activate to change.`
+                    ? `Waiting for a ${noun} for ${label(button)}. Escape cancels.`
+                    : `${label(button)}, set to ${describeKeys(keys, noun)}. Activate to change.`
                 }
               >
                 <span className="bind-name">
@@ -261,9 +391,13 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
                 </span>
                 <span className="bind-keys">
                   {active ? (
-                    <kbd className="listening">PRESS A KEY</kbd>
+                    <kbd className="listening">PRESS A {noun.toUpperCase()}</kbd>
                   ) : keys.length ? (
-                    keys.map((code) => <kbd key={code}>{keyLabel(code)}</kbd>)
+                    keys.map((name, i) => (
+                      <kbd key={i}>
+                        <KeyName name={name} />
+                      </kbd>
+                    ))
                   ) : (
                     <kbd className="empty">NONE</kbd>
                   )}
@@ -273,7 +407,11 @@ export function ControlsPanel({ bindings: all, platform, signedIn, onChange: onC
           );
         })}
       </ul>
-      <p className="fine">Esc cancels while a button is waiting for a key.</p>
+      <p className="fine">
+        {showPad
+          ? "Esc cancels while a button is waiting for a controller button. The left stick always moves like the D-pad."
+          : "Esc cancels while a button is waiting for a key."}
+      </p>
     </SidePanel>
   );
 }
@@ -287,6 +425,6 @@ function at(x: number, y: number, w?: number, h?: number) {
   };
 }
 
-function describeKeys(codes: string[]): string {
-  return codes.length ? codes.map(keyLabel).join(" or ") : "no key";
+function describeKeys(names: string[], noun: string): string {
+  return names.length ? names.join(" or ") : `no ${noun}`;
 }
