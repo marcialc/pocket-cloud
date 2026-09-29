@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addMissingSha1,
   clearCloudSyncState,
@@ -170,6 +170,35 @@ describe("IndexedDB saves", () => {
     });
     await expect(listRoms()).rejects.toBeInstanceOf(DbBlockedError);
     old.close();
+    (await openRaw()).close(); // queued behind the waiting open, so it has gone through by now
+    expect(await listRoms()).toEqual([]);
+  });
+
+  it("fails clearly when queued behind another tab's upgrade, which gets no blocked event", async () => {
+    await closeDb();
+    await deleteDb();
+    const old = await openRaw(1, (db) => {
+      db.createObjectStore("saves", { keyPath: "romHash" });
+      db.createObjectStore("roms", { keyPath: "romHash" });
+    });
+    // Another tab with this code, already waiting on the old one: this tab's open queues behind it.
+    const other = openRaw(2, (db) => {
+      db.createObjectStore("romSummaries", { keyPath: "romHash" });
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const first = listRoms();
+      const settled = expect(first).rejects.toBeInstanceOf(DbBlockedError);
+      await vi.advanceTimersByTimeAsync(5000);
+      await settled;
+      // Asking again answers at once from the same open, rather than queueing another behind it.
+      await expect(listRoms()).rejects.toBeInstanceOf(DbBlockedError);
+    } finally {
+      vi.useRealTimers();
+    }
+    old.close();
+    (await other).close();
+    (await openRaw()).close(); // queued behind this tab's waiting open, so it has gone through by now
     expect(await listRoms()).toEqual([]);
   });
 

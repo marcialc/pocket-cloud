@@ -73,14 +73,33 @@ export class DbBlockedError extends Error {
   }
 }
 
+/** How long an open may go without a word from IndexedDB before it's taken as stuck behind another tab. */
+const OPEN_TIMEOUT_MS = 5000;
+const NEVER = new Promise<never>(() => {});
+
 let dbPromise: Promise<IDBDatabase> | null = null;
+/** Rejects once the open in flight is stuck behind another tab. The open itself carries on meanwhile. */
+let stuck: Promise<never> = NEVER;
 
 function openDb(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
-  let blocked = false;
+  if (!dbPromise) startOpening();
+  return Promise.race([dbPromise!, stuck]);
+}
+
+function startOpening(): void {
+  let giveUp!: () => void;
+  const mine = new Promise<never>((_, reject) => (giveUp = () => reject(new DbBlockedError())));
+  mine.catch(() => {});
+  stuck = mine;
   const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    // Only the open at the front of the queue hears onblocked: one waiting behind it (another tab's, or
+    // this tab's own earlier one) hears nothing at all. So a long silence is taken as stuck too.
+    const timer = setTimeout(giveUp, OPEN_TIMEOUT_MS);
     req.onupgradeneeded = (event) => {
+      // The upgrade has begun (copying the summaries can take a while on a big library): no longer stuck.
+      clearTimeout(timer);
+      if (stuck === mine) stuck = NEVER;
       const db = req.result;
       if (!db.objectStoreNames.contains(SAVES)) db.createObjectStore(SAVES, { keyPath: "romHash" });
       if (!db.objectStoreNames.contains(ROMS)) db.createObjectStore(ROMS, { keyPath: "romHash" });
@@ -99,15 +118,13 @@ function openDb(): Promise<IDBDatabase> {
       }
     };
     // Every connection this tab had is closed below on versionchange, so this means a tab running
-    // older code (which never closes). Waiting would hang with no word why; say so instead.
-    req.onblocked = () => {
-      blocked = true;
-      reject(new DbBlockedError());
-    };
+    // older code (which never closes). Tell the player now, but keep this open waiting rather than
+    // start another: a new one would only queue behind it, and each reload would add to the pile.
+    req.onblocked = giveUp;
     req.onsuccess = () => {
+      clearTimeout(timer);
+      if (stuck === mine) stuck = NEVER;
       const db = req.result;
-      // The other tab closed after all, but this open was already given up on.
-      if (blocked) return db.close();
       // Another tab wants to upgrade (or delete) the database: let it, and reopen on next use.
       db.onversionchange = () => {
         db.close();
@@ -115,13 +132,15 @@ function openDb(): Promise<IDBDatabase> {
       };
       resolve(db);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      clearTimeout(timer);
+      reject(req.error);
+    };
   });
   dbPromise = opening;
   opening.catch(() => {
     if (dbPromise === opening) dbPromise = null;
   });
-  return opening;
 }
 
 /** A ROM's library entry: everything but the bytes. */
