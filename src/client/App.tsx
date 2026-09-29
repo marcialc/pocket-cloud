@@ -69,6 +69,8 @@ export function App() {
   const [prefs, setPrefs] = useState<Preferences>(loadPreferences);
   // null until IndexedDB answers, so the empty-shelf art doesn't flash on load.
   const [library, setLibrary] = useState<RomSummary[] | null>(null);
+  // Another tab holds the database, so `library` can't be read for now.
+  const [localBlocked, setLocalBlocked] = useState(false);
   // Signed-in email; undefined while checking, null when signed out.
   const [account, setAccount] = useState<string | null | undefined>(undefined);
   const accountRef = useRef(account);
@@ -96,12 +98,14 @@ export function App() {
     listRoms().then(
       (roms) => {
         setLibrary(roms);
+        setLocalBlocked(false);
         setStage((s) => (s.name === "pick" && s.error === BLOCKED_MESSAGE ? { name: "pick" } : s));
       },
       (err: unknown) => {
         if (!(err instanceof DbBlockedError)) return setLibrary([]);
         // A tab running older code holds the database: say so (an empty shelf would look like the games
         // are gone), and look again when the player comes back from closing it.
+        setLocalBlocked(true);
         setStage((s) => (s.name === "pick" ? { name: "pick", error: BLOCKED_MESSAGE } : s));
         window.addEventListener("focus", () => refresh(), { once: true });
       },
@@ -155,7 +159,16 @@ export function App() {
     cloudLibrary && prefs.cloudRoms === "ask" && cloud && library ? { missing: missingFromAccount(library, cloud).length } : null;
 
   const names = prefs.shelf.names;
-  const shelf = useMemo(() => (library ? mergeLibrary(library, cloudRoms, names) : null), [library, cloudRoms, names]);
+  const shelf = useMemo(
+    () =>
+      library
+        ? mergeLibrary(library, cloudRoms, names)
+        : // Meanwhile the account's games can still be shown (not as empty, though: this device's aren't known).
+          localBlocked && cloudRoms?.length
+          ? mergeLibrary([], cloudRoms, names)
+          : null,
+    [library, localBlocked, cloudRoms, names],
+  );
 
   useEffect(() => {
     fetchAccount().then((email) => {
