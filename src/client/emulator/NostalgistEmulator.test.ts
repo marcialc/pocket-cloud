@@ -153,12 +153,12 @@ describe("NostalgistEmulator", () => {
     };
     expect(options).toMatchObject({ core: "mgba", rom: { fileName: "game.gba" }, respondToGlobalEvents: false, element: canvas });
     expect(options.resolveCoreWasm("mgba").href).toBe("http://localhost/vendor/retroarch/mgba_libretro.wasm");
-    const binds = Object.keys(options.retroarchConfig).filter((key) => key.startsWith("input_player1_"));
+    const binds = Object.keys(options.retroarchConfig).filter((key) => key.startsWith("input_player1_") && key !== "input_player1_joypad_index");
     expect(binds.sort()).toEqual(
       ["a", "b", "down", "l", "left", "r", "right", "select", "start", "up"].map((b) => `input_player1_${b}`),
     );
     // Controllers only reach the core through our bindings.
-    expect(options.retroarchConfig.input_joypad_driver).toBe("null");
+    expect(options.retroarchConfig).toMatchObject({ input_player1_joypad_index: 15, input_autodetect_enable: false });
     // Nothing runs until start().
     expect(core.start).not.toHaveBeenCalled();
   });
