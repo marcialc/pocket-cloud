@@ -77,13 +77,13 @@ export function forgetBackUp(romHash: string): void {
 }
 
 /**
- * Uploads every ROM in this browser the account doesn't have yet, one at a
+ * Uploads every ROM in this browser's shelf for `account` that the account doesn't have yet, one at a
  * time, skipping games the player removed from the account. Returns how many
  * were uploaded. Stops when `signal` aborts (e.g. sign-out) or the library is full.
  */
-export async function backUpLibrary(cloud: ListRomsResponse, signal: AbortSignal): Promise<number> {
+export async function backUpLibrary(cloud: ListRomsResponse, account: string, signal: AbortSignal): Promise<number> {
   let uploaded = 0;
-  for (const summary of missingFromAccount(await listRoms(), cloud)) {
+  for (const summary of missingFromAccount(await listRoms(account), cloud)) {
     if (signal.aborted) break;
     const rom = await getRom(summary.romHash);
     if (!rom || signal.aborted) continue;

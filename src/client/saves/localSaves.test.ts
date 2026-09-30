@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addMissingSha1,
+  claimRoms,
   clearCloudSyncState,
   closeDb,
   deleteLocalSave,
@@ -209,6 +210,25 @@ describe("IndexedDB saves", () => {
     const list = await listRoms();
     expect(list).toHaveLength(1);
     expect(list[0]!.lastPlayedAt).toBe(9);
+  });
+
+  it("shows each account only its own games (and those of no account), and none of them signed out", async () => {
+    const base: StoredRom = { romHash: "1", fileName: "a.gb", title: "A", data: new ArrayBuffer(4), addedAt: 1, lastPlayedAt: 1 };
+    await putRom(base);
+    await putRom({ ...base, romHash: "2", owner: "me@example.com" });
+    await putRom({ ...base, romHash: "3", owner: "other@example.com" });
+    const hashes = async (account?: string | null) => (await listRoms(account)).map((r) => r.romHash).sort();
+    expect(await hashes(null)).toEqual(["1"]);
+    expect(await hashes("me@example.com")).toEqual(["1", "2"]);
+    expect(await hashes()).toEqual(["1", "2", "3"]);
+
+    // Signing in takes over the games played without an account.
+    await claimRoms("me@example.com");
+    expect(await hashes(null)).toEqual([]);
+    expect(await hashes("me@example.com")).toEqual(["1", "2"]);
+    expect(await hashes("other@example.com")).toEqual(["3"]);
+    await touchRom("1");
+    expect((await getRom("1"))!.owner).toBe("me@example.com");
   });
 
   it("lists names given before they moved to the shelf, and forgets them once moved", async () => {

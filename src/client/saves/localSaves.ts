@@ -54,6 +54,12 @@ export type StoredRom = {
   data: ArrayBuffer;
   addedAt: number;
   lastPlayedAt: number;
+  /**
+   * Email of the account this game belongs to: stored while signed in, or kept by this browser before
+   * that account signed in here. Missing for games played without an account. Other players (or no
+   * player) don't see it on the shelf; the bytes stay, so it's back when that account signs in again.
+   */
+  owner?: string;
 };
 
 /** Library entry without the ROM bytes (cheap to list). */
@@ -201,10 +207,14 @@ export async function putRom(rom: StoredRom): Promise<void> {
   await done(tx);
 }
 
-/** Library entries, most recently played first (ROM bytes not read). */
-export async function listRoms(): Promise<RomSummary[]> {
+/**
+ * Library entries, most recently played first (ROM bytes not read). Given `account` (null when signed
+ * out), only the games it can see: those that belong to no account, and its own.
+ */
+export async function listRoms(account?: string | null): Promise<RomSummary[]> {
   const all: RomSummary[] = await request((await store(ROM_SUMMARIES, "readonly")).getAll());
   return all
+    .filter((rom) => account === undefined || !rom.owner || rom.owner === account)
     .map((rom) => ({
       ...rom,
       title: rom.title || rom.fileName,
@@ -246,6 +256,15 @@ export async function addMissingSha1(): Promise<number> {
     if ((await getRom(summary.romHash))?.sha1) added++;
   }
   return added;
+}
+
+/** Signed in: the games that belonged to no account now belong to this one, like the saves do. */
+export async function claimRoms(owner: string): Promise<void> {
+  for (const summary of await listRoms()) {
+    if (summary.owner) continue;
+    const rom = await getRom(summary.romHash);
+    if (rom && !rom.owner) await putRom({ ...rom, owner });
+  }
 }
 
 export async function touchRom(romHash: string): Promise<void> {

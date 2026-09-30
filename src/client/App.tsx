@@ -23,6 +23,7 @@ import { clearInvite, takeInvite } from "./saves/invite";
 import { deleteResumeState } from "./saves/resumeStates";
 import {
   addMissingSha1,
+  claimRoms,
   clearCloudSyncState,
   DbBlockedError,
   deleteLocalSave,
@@ -97,7 +98,10 @@ export function App() {
   useEffect(() => (prefs.uiSounds ? bindUiSounds() : undefined), [prefs.uiSounds]);
 
   const refreshLibrary = useCallback(function refresh() {
-    listRoms().then(
+    // The shelf shows only the signed-in account's games, so wait until it's known who that is.
+    const account = accountRef.current;
+    if (account === undefined) return;
+    listRoms(account).then(
       (roms) => {
         setLibrary(roms);
         setLocalBlocked(false);
@@ -113,7 +117,7 @@ export function App() {
       },
     );
   }, []);
-  useEffect(refreshLibrary, [refreshLibrary]);
+  useEffect(refreshLibrary, [refreshLibrary, account]);
   // ROMs stored before their SHA-1 was kept have no box art until it's worked out from their bytes.
   useEffect(() => {
     addMissingSha1().then(
@@ -147,7 +151,7 @@ export function App() {
     if (!keepGames || !cloudReady) return;
     const stop = new AbortController();
     setBackingUp(true);
-    backUpLibrary(cloudRef.current!, stop.signal)
+    backUpLibrary(cloudRef.current!, accountRef.current!, stop.signal)
       .then((n) => !stop.signal.aborted && n > 0 && refreshCloudRoms())
       .finally(() => !stop.signal.aborted && setBackingUp(false));
     return () => {
@@ -173,7 +177,8 @@ export function App() {
   );
 
   useEffect(() => {
-    fetchAccount().then((email) => {
+    fetchAccount().then(async (email) => {
+      if (email) await claimRoms(email).catch((err) => console.warn("Could not add this browser's games to the account", err));
       setAccount(email);
       if (!email && !loadPreferences().skipSignIn && !inviteRef.current) setWelcome(true);
     });
@@ -185,6 +190,7 @@ export function App() {
     await clearCloudSyncState();
     resetBackUpState();
     setPrefs(resetCloudRomsChoice());
+    await claimRoms(email).catch((err) => console.warn("Could not add this browser's games to the account", err));
     setAccount(email);
     setWelcome(false);
   }, []);
@@ -196,10 +202,12 @@ export function App() {
     // The favorites and groups (with names the player typed) stay in the account, not in this browser
     // for whoever signs in next.
     forgetUnsyncedShelf();
-    const next = { ...resetCloudRomsChoice(), shelf: EMPTY_SHELF };
+    // Back to the welcome screen, to sign in again or carry on without an account.
+    const next = { ...resetCloudRomsChoice(), shelf: EMPTY_SHELF, skipSignIn: false };
     savePreferences(next);
     setPrefs(next);
     setAccount(null);
+    setWelcome(true);
   }, []);
 
   const storePrefs = useCallback((patch: Partial<Preferences>) => {
@@ -303,6 +311,7 @@ export function App() {
             fileName,
             title: displayName(rom),
             ...(existing?.customName ? { customName: existing.customName } : {}),
+            ...(accountRef.current ? { owner: accountRef.current } : {}),
             data,
             addedAt: existing?.addedAt ?? now,
             lastPlayedAt: now,

@@ -48,8 +48,18 @@ describe("mergeLibrary", () => {
   });
 });
 
-const stored = (romHash: string) =>
-  putRom({ romHash, fileName: `${romHash}.gb`, title: "T", data: new Uint8Array(4).buffer, addedAt: 1, lastPlayedAt: 1 });
+const ME = "me@example.com";
+
+const stored = (romHash: string, owner?: string) =>
+  putRom({
+    romHash,
+    fileName: `${romHash}.gb`,
+    title: "T",
+    data: new Uint8Array(4).buffer,
+    addedAt: 1,
+    lastPlayedAt: 1,
+    ...(owner ? { owner } : {}),
+  });
 
 const account = (roms: string[], removed: string[] = []): ListRomsResponse => ({
   roms: roms.map((h) => cloud(h, 1)),
@@ -64,24 +74,31 @@ describe("backing up to the account", () => {
   afterEach(() => forgetRoms());
 
   it("uploads only games the account doesn't have and the player didn't remove", async () => {
-    await Promise.all(["a", "b", "c"].map(stored));
-    const n = await backUpLibrary(account(["a"], ["b"]), new AbortController().signal);
+    await Promise.all(["a", "b", "c"].map((h) => stored(h)));
+    const n = await backUpLibrary(account(["a"], ["b"]), ME, new AbortController().signal);
     expect(n).toBe(1);
     expect(upload.mock.calls.map(([rom]) => rom.romHash)).toEqual(["c"]);
   });
 
+  it("leaves another account's games in this browser alone", async () => {
+    await stored("a", ME);
+    await stored("b", "other@example.com");
+    expect(await backUpLibrary(account([]), ME, new AbortController().signal)).toBe(1);
+    expect(upload.mock.calls.map(([rom]) => rom.romHash)).toEqual(["a"]);
+  });
+
   it("stops at library_full", async () => {
-    await Promise.all(["a", "b"].map(stored));
+    await Promise.all(["a", "b"].map((h) => stored(h)));
     upload.mockRejectedValue(new CloudRomError("library_full"));
-    expect(await backUpLibrary(account([]), new AbortController().signal)).toBe(0);
+    expect(await backUpLibrary(account([]), ME, new AbortController().signal)).toBe(0);
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
   it("stops when aborted", async () => {
-    await Promise.all(["a", "b"].map(stored));
+    await Promise.all(["a", "b"].map((h) => stored(h)));
     const stop = new AbortController();
     upload.mockImplementation(async () => stop.abort());
-    expect(await backUpLibrary(account([]), stop.signal)).toBe(1);
+    expect(await backUpLibrary(account([]), ME, stop.signal)).toBe(1);
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
@@ -96,7 +113,7 @@ describe("backing up to the account", () => {
     await backUpRom({ romHash: "a", fileName: "a.gb", title: "A", data: new ArrayBuffer(4) });
     const staleList = account([]);
     expect(missingFromAccount([local("a", 1)], staleList)).toEqual([]);
-    expect(await backUpLibrary(staleList, new AbortController().signal)).toBe(0);
+    expect(await backUpLibrary(staleList, ME, new AbortController().signal)).toBe(0);
     expect(upload).toHaveBeenCalledTimes(1);
   });
 

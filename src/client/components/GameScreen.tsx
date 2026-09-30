@@ -12,7 +12,7 @@ import { LinkEmulator, unlockLinkAudio } from "../emulator/LinkEmulator";
 import { scoreWatcherFor } from "../emulator/scoreWatch";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
 import { displayName } from "../emulator/rom";
-import { resetCloudRomsChoice, type Preferences } from "../preferences";
+import { loadPreferences, resetCloudRomsChoice, savePreferences, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
 import { lockGame, waitForGame, type GameLock } from "../saves/gameLock";
@@ -903,7 +903,13 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           prefs={prefs}
           onPrefs={onPrefs}
           onSignedIn={() => switchIdentity(resetPlayerKey)}
-          onSignOut={(everywhere) => switchIdentity(() => signOut(everywhere))}
+          onSignOut={(everywhere) =>
+            switchIdentity(async () => {
+              await signOut(everywhere);
+              // After the reload, the welcome screen: sign in again or carry on without an account.
+              savePreferences({ ...loadPreferences(), skipSignIn: false });
+            })
+          }
           onBeforeRestore={async () => {
             await sync?.flush();
             sync?.destroy();
