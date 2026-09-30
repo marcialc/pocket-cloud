@@ -21,7 +21,10 @@
 			// on an M-series Mac under amd64 emulation. Revisit once measured on
 			// Cloudflare.
 			"instance_type": "standard-1",
-			"max_instances": 20
+			"max_instances": 20,
+			// linkd's output (each player's stream stats every 10 s) in Workers
+			// Logs, next to the Worker's own.
+			"observability": { "logs": { "enabled": true } }
 		}
 	],
 	"durable_objects": {

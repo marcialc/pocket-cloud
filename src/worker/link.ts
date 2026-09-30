@@ -53,7 +53,10 @@ export async function handleLink(request: Request, env: Env, url: URL, playerId:
   switch (action) {
     case "ws":
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket_required" }, 426);
-      return env.LINK.fetch(new Request(`${room}/ws`, { headers: { ...headers, Upgrade: "websocket" } }));
+      // Where the player connects from goes in the link server's logs, to tell distance from other lag.
+      return env.LINK.fetch(
+        new Request(`${room}/ws`, { headers: { ...headers, Upgrade: "websocket", "X-Client-Colo": String(request.cf?.colo ?? "") } }),
+      );
     case "plug": {
       const plug = await readPlug(request);
       if ("error" in plug) return json({ error: plug.error }, 400);

@@ -40,6 +40,13 @@
  * Client to server:
  *   0x01 keys(u16)                           held buttons, GBA bit order
  *   0x02 8 bytes                             ping, echoed back as is
+ *   0x03 seq(u32)                            frame drawn; once a client sends
+ *                                            these, at most FRAMES_AHEAD
+ *                                            frames are in flight to it
+ *   0x04 in(u16) drawn(u16) waitAvg(u16)     the client's last ~10 s, logged:
+ *        waitMax(u16) pingAvg(u16)           frames received and drawn, ms
+ *        pingMax(u16) flags(u8)              from arrival to drawn, ping ms;
+ *                                            flags 1 tab hidden, 2 touch
  * Multi-byte numbers are little-endian.
  */
 
@@ -74,6 +81,13 @@
  * per player. */
 #define AUDIO_TARGET_RATE 16384
 #define AUDIO_RING 16384
+/* Frames sent but not yet drawn by the client, at most: enough for 60 fps
+ * over a ~100 ms round trip, and no more than ~100 ms of queued picture. */
+#define FRAMES_AHEAD 6
+/* Send times of the last this many frames, to time them until drawn. */
+#define SENT_RING 64
+/* How often each player's stream stats are logged. */
+#define STATS_SECONDS 10
 
 /* Where linktest.gba writes its results; keep in sync with its RESULT_*. */
 #define RESULT_ADDRESS 0x02000000
@@ -85,6 +99,8 @@ enum {
 	MSG_KEYS = 0x01,
 	MSG_PING = 0x02,
 	MSG_AUDIO = 0x03,
+	MSG_DRAWN = 0x03,
+	MSG_CLIENT_STATS = 0x04,
 };
 
 struct Player {
@@ -289,7 +305,29 @@ struct Viewer {
 	struct Player* player;
 	struct WsConn* conn;
 	atomic_bool stop;
+	/* Frames the client says it drew; zero from clients that don't say. */
+	atomic_uint drawn;
+	/* How long frames take from being sent to being drawn, for the logs. */
+	_Atomic uint32_t sentSeq[SENT_RING];
+	_Atomic uint64_t sentAt[SENT_RING];
+	_Atomic uint64_t drawnWaitSum;
+	atomic_uint drawnWaitCount;
+	_Atomic uint64_t drawnWaitMax;
 };
+
+static uint64_t nowNs(void) {
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t) t.tv_sec * 1000000000ULL + (uint64_t) t.tv_nsec;
+}
+
+static unsigned getU16(const uint8_t* p) {
+	return (unsigned) p[0] | ((unsigned) p[1] << 8);
+}
+
+static uint32_t getU32(const uint8_t* p) {
+	return (uint32_t) getU16(p) | ((uint32_t) getU16(p + 2) << 16);
+}
 
 static void putU16(uint8_t* p, unsigned value) {
 	p[0] = (uint8_t) value;
@@ -304,7 +342,10 @@ static void putU32(uint8_t* p, uint32_t value) {
 
 /* Sends each new frame as a zlib-compressed XOR against the last one this
  * socket got, so unchanged pixels cost next to nothing. A slow socket skips
- * frames rather than falling behind. */
+ * frames rather than falling behind. The socket itself rarely pushes back
+ * (in production it goes into Cloudflare, which queues whatever it gets), so
+ * a slow client or connection would build up a growing delay; clients that
+ * say which frames they drew get no more than FRAMES_AHEAD in flight. */
 static void* viewerSendThread(void* arg) {
 	struct Viewer* viewer = arg;
 	struct Player* player = viewer->player;
@@ -316,6 +357,7 @@ static void* viewerSendThread(void* arg) {
 	uLongf capacity = compressBound((uLong) bytes);
 	uint8_t* packed = malloc(capacity);
 	uint32_t seen = 0;
+	unsigned framesSent = 0;
 	uint8_t sound[AUDIO_RING];
 	size_t soundLength = 0;
 	unsigned soundRate = 0;
@@ -325,8 +367,9 @@ static void* viewerSendThread(void* arg) {
 	pthread_mutex_unlock(&player->frameLock);
 	unsigned long long sentBytes = 0;
 	unsigned sentFrames = 0;
-	struct timespec since, now;
-	clock_gettime(CLOCK_MONOTONIC, &since);
+	unsigned skippedFrames = 0;
+	unsigned gameFrames = atomic_load(&player->frames);
+	uint64_t since = nowNs();
 
 	while (!atomic_load(&viewer->stop)) {
 		pthread_mutex_lock(&player->frameLock);
@@ -351,6 +394,27 @@ static void* viewerSendThread(void* arg) {
 			break;
 		}
 
+		/* Is the game keeping full speed, how much of it gets sent, and how
+		 * late it's drawn: what to look at when a player says it lags. */
+		uint64_t now = nowNs();
+		double elapsed = (double) (now - since) / 1e9;
+		if (elapsed >= STATS_SECONDS) {
+			unsigned games = atomic_load(&player->frames);
+			unsigned waits = atomic_exchange(&viewer->drawnWaitCount, 0);
+			uint64_t waitSum = atomic_exchange(&viewer->drawnWaitSum, 0);
+			uint64_t waitMax = atomic_exchange(&viewer->drawnWaitMax, 0);
+			fprintf(stderr,
+			        "player %d stream: game %.1f fps, sent %.1f fps, skipped %u for the client to catch up, %.0f kbit/s, "
+			        "sent to drawn avg %.0f ms max %.0f ms\n",
+			        player->index + 1, (games - gameFrames) / elapsed, sentFrames / elapsed, skippedFrames,
+			        sentBytes * 8 / elapsed / 1000, waits ? (double) waitSum / waits / 1e6 : 0, (double) waitMax / 1e6);
+			gameFrames = games;
+			sentBytes = 0;
+			sentFrames = 0;
+			skippedFrames = 0;
+			since = now;
+		}
+
 		if (soundLength) {
 			uint8_t soundHead[5] = { MSG_AUDIO };
 			putU32(soundHead + 1, soundRate);
@@ -358,6 +422,12 @@ static void* viewerSendThread(void* arg) {
 				break;
 			}
 			sentBytes += sizeof(soundHead) + soundLength;
+		}
+
+		unsigned drawn = atomic_load(&viewer->drawn);
+		if (drawn && (int) (framesSent - drawn) >= FRAMES_AHEAD) {
+			++skippedFrames;
+			continue;
 		}
 
 		for (size_t i = 0; i < pixels; ++i) {
@@ -372,21 +442,15 @@ static void* viewerSendThread(void* arg) {
 		if (!wsSend(viewer->conn, head, sizeof(head), packed, packedLength)) {
 			break;
 		}
+		atomic_store(&viewer->sentAt[seen % SENT_RING], nowNs());
+		atomic_store(&viewer->sentSeq[seen % SENT_RING], seen);
 		uint16_t* swap = previous;
 		previous = current;
 		current = swap;
 
 		sentBytes += sizeof(head) + packedLength;
 		++sentFrames;
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		double elapsed = (double) (now.tv_sec - since.tv_sec) + (now.tv_nsec - since.tv_nsec) / 1e9;
-		if (elapsed >= 10) {
-			fprintf(stderr, "player %d: %.1f fps, %.0f kB/s (%.0f kbit/s)\n", player->index + 1,
-			        sentFrames / elapsed, sentBytes / elapsed / 1000, sentBytes * 8 / elapsed / 1000);
-			sentBytes = 0;
-			sentFrames = 0;
-			since = now;
-		}
+		++framesSent;
 	}
 	free(current);
 	free(previous);
@@ -438,6 +502,7 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 	struct Player* player = &players[index - 1];
 	struct Viewer viewer = { .player = player, .conn = conn };
 	atomic_init(&viewer.stop, false);
+	atomic_init(&viewer.drawn, 0);
 	if (!addViewer(&viewer)) {
 		return;
 	}
@@ -459,6 +524,24 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 			unsigned keys = (unsigned) (message[1] | (message[2] << 8)) & GBA_KEYS_MASK;
 			atomic_store(&player->keys, keys);
 			atomic_fetch_or(&player->tapped, keys);
+		} else if (message[0] == MSG_DRAWN && length == 5) {
+			atomic_fetch_add(&viewer.drawn, 1);
+			uint32_t seq = getU32(message + 1);
+			if (atomic_load(&viewer.sentSeq[seq % SENT_RING]) == seq) {
+				uint64_t wait = nowNs() - atomic_load(&viewer.sentAt[seq % SENT_RING]);
+				atomic_fetch_add(&viewer.drawnWaitSum, wait);
+				atomic_fetch_add(&viewer.drawnWaitCount, 1);
+				uint64_t max = atomic_load(&viewer.drawnWaitMax);
+				while (wait > max && !atomic_compare_exchange_weak(&viewer.drawnWaitMax, &max, wait)) {}
+			}
+		} else if (message[0] == MSG_CLIENT_STATS && length == 14) {
+			unsigned flags = message[13];
+			fprintf(stderr,
+			        "player %d client: %u frames in, %u drawn, arrival to drawn avg %u ms max %u ms, ping avg %u ms max %u ms, "
+			        "%s, tab %s\n",
+			        index, getU16(message + 1), getU16(message + 3), getU16(message + 5), getU16(message + 7),
+			        getU16(message + 9), getU16(message + 11), (flags & 2) ? "touch" : "no touch",
+			        (flags & 1) ? "hidden" : "visible");
 		} else if (message[0] == MSG_PING && length == 9) {
 			wsSend(conn, message, length, NULL, 0);
 		}

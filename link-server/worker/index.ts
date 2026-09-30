@@ -209,6 +209,7 @@ export class LinkRoom extends DurableObject<Env> {
     const seat = (await this.seats()).find((s) => s.playerId === playerId);
     if (!seat) return json({ error: "not_plugged_in" }, 403);
     if ((await this.status()).state !== "linked") return json({ error: "not_linked" }, 409);
+    console.log(JSON.stringify({ message: "screen connected", slot: seat.slot, clientColo: request.headers.get("X-Client-Colo") }));
     try {
       return await this.port().fetch(new Request(`http://linkd/ws?player=${seat.slot}`, request));
     } catch (err) {
