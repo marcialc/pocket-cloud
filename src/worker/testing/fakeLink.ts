@@ -4,8 +4,8 @@
  * rooms in memory and "links" at once, with no container: enough to test
  * the /api/link routes. The real API is in link-server/worker/index.ts.
  */
-type Seat = { playerId: string; romHash: string; slot: 1 | 2 };
-type Room = { seats: Seat[]; results: Map<string, { romHash: string; sram: string }> };
+type Seat = { playerId: string; romHash: string; slot: 1 | 2; state?: string };
+type Room = { seats: Seat[]; results: Map<string, { romHash: string; sram: string; state?: string }> };
 
 const rooms = new Map<string, Room>();
 
@@ -27,12 +27,12 @@ export async function fakeLink(request: Request): Promise<Response> {
     case "GET ":
       return Response.json(status());
     case "POST plug": {
-      const { romHash } = (await request.json()) as { romHash: string };
+      const { romHash, state } = (await request.json()) as { romHash: string; state?: string };
       if (room.results.has(playerId)) return Response.json({ error: "collect_save_first" }, { status: 409 });
       let seat = room.seats.find((s) => s.playerId === playerId);
       if (!seat) {
         if (room.seats.length === 2) return Response.json({ error: "room_full" }, { status: 409 });
-        seat = { playerId, romHash, slot: room.seats.some((s) => s.slot === 1) ? 2 : 1 };
+        seat = { playerId, romHash, slot: room.seats.some((s) => s.slot === 1) ? 2 : 1, ...(state ? { state } : {}) };
         room.seats.push(seat);
       }
       return Response.json({ slot: seat.slot, ...status() });
@@ -45,7 +45,11 @@ export async function fakeLink(request: Request): Promise<Response> {
         room.seats = [];
         return Response.json({ ended: true });
       }
-      for (const seat of room.seats) room.results.set(seat.playerId, { romHash: seat.romHash, sram: btoa(`save of player ${seat.slot}`) });
+      // The game "carried on" from the snapshot it was plugged in with, and was left there.
+      for (const seat of room.seats) {
+        const state = seat.state ? { state: seat.state } : {};
+        room.results.set(seat.playerId, { romHash: seat.romHash, sram: btoa(`save of player ${seat.slot}`), ...state });
+      }
       room.seats = [];
       return takeSave(room, playerId);
     }

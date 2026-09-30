@@ -10,6 +10,8 @@ import type { Shelf } from "./shelf";
 
 /** Largest battery RAM any supported cartridge type exposes (MBC5: 128 KiB). */
 export const MAX_SRAM_BYTES = 128 * 1024;
+/** A link snapshot as sent (zlib); mGBA's is about 400 KB before compressing. */
+export const MAX_LINK_STATE_BYTES = 1024 * 1024;
 
 /** SHA-256 hex digest. Used for both ROM fingerprints and SRAM content hashes. */
 export const HASH_PATTERN = /^[0-9a-f]{64}$/;

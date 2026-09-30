@@ -41,9 +41,10 @@ export function LinkPanel({ romHash, onPlug, onClose }: Props) {
       <div className="card stack-sm">
         <h3 className="h-lg">Trade and battle with a friend</h3>
         <p className="fine">
-          Like two GBAs on a cable: you both play your own game and save. Go to the link room in your game (in Pokémon,
-          the Pokémon Center’s upstairs), save, then plug in with the same friend. While linked, both games run on the
-          link server; unplug and your save from the link comes back here.
+          Like two GBAs on a cable: you both play your own game. Go to the link room in your game (in Pokémon, the
+          Pokémon Center’s upstairs), then plug in with the same friend. While linked, both games run on the link server
+          and carry on from where you were; unplug and your game carries on here from where the link left it, with your
+          save.
         </p>
       </div>
 

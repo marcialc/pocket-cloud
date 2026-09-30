@@ -24,6 +24,7 @@ import {
   plugIn,
   takeLinkSave,
   unplug,
+  type LinkSave,
   type LinkStatus,
 } from "../saves/linkApi";
 import { resetPlayerKey } from "../saves/identity";
@@ -451,17 +452,28 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   };
 
   /**
-   * A save that came back from a link: keep it, and restart the game from it.
-   * If the link didn't change it, the game just carries on from where it was
-   * paused, like pulling a real cable after doing nothing.
+   * What a link left: keep its save, and carry on from where the link left
+   * the game (or restart from the save, if the link server had no snapshot).
+   * Returns false if there was nothing to take: the game then carries on from
+   * where it was paused, like pulling a real cable after doing nothing.
    */
-  const applyLinkSave = async (sram: Uint8Array): Promise<boolean> => {
+  const applyLinkSave = async ({ sram, state }: LinkSave): Promise<boolean> => {
     if (!emulator || !sync) return false;
     const current = emulator.getSram();
-    if (current && current.length === sram.length && current.every((byte, i) => byte === sram[i])) return false;
-    await sync.adopt(sram);
-    emulator.loadSram(sram);
-    emulator.setClock?.(sync.getRtcBase());
+    const newSave = sram && !(current && current.length === sram.length && current.every((byte, i) => byte === sram[i]));
+    if (!newSave && !state) return false;
+    if (newSave) {
+      await sync.adopt(sram);
+      emulator.loadSram(sram);
+      emulator.setClock?.(sync.getRtcBase());
+    }
+    if (state) {
+      try {
+        emulator.loadState?.(state);
+      } catch (err) {
+        console.warn("Could not carry on from where the link left the game", err);
+      }
+    }
     emulator.reset();
     shots.current?.clear();
     return true;
@@ -480,7 +492,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     const saved = await takeLinkSave(friend.friendCode);
     if (!saved) return "The link ended.";
     if (saved.romHash !== session.rom.romHash) return "The link ended. Your save from it is waiting in the game you played.";
-    return (await applyLinkSave(saved.sram)) ? "The link ended. Your save from it is loaded." : "The link ended.";
+    return (await applyLinkSave(saved)) ? "The link ended. Your game carries on from where the link left it." : "The link ended.";
   };
 
   const plug = async (friend: Profile) => {
@@ -491,6 +503,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     setLink({ friend, phase: "plugging" });
     linkOn.current = true;
     const wasRunning = emulator.running;
+    // The link carries on from where the game is, not from power-on. Taken before pausing:
+    // RetroArch only writes a snapshot while the game runs. Without one the link boots the save.
+    let state = wasRunning
+      ? ((await emulator.coreState?.().catch((err: unknown) => (console.warn("Could not take a snapshot for the link", err), null))) ?? null)
+      : null;
     if (wasRunning) emulator.pause();
     sync.setPlaying(false);
     setPaused(true);
@@ -499,14 +516,15 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       await sync.flush({ keepalive: false });
       let status: LinkStatus;
       try {
-        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram());
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state);
       } catch (err) {
         if (!(err instanceof LinkError && err.code === "collect_save_first")) throw err;
-        // A save from the last link with this friend: take it (it's newer), then plug in with it.
+        // A save from the last link with this friend: take it (it's newer), then plug in with it,
+        // from where that link left the game.
         const saved = await takeLinkSave(friend.friendCode);
         if (saved && saved.romHash !== session.rom.romHash) throw err;
-        if (saved) await applyLinkSave(saved.sram);
-        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram());
+        if (saved && (await applyLinkSave(saved))) state = saved.state;
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state);
       }
       if (status.state === "failed") {
         await unplug(friend.friendCode).catch(() => null);
@@ -526,7 +544,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     try {
       const { save, lost } = await unplug(friend.friendCode);
       if (save && save.romHash === session.rom.romHash) {
-        return endLink((await applyLinkSave(save.sram)) ? "Unplugged. Your save from the link is loaded." : "Unplugged.");
+        return endLink((await applyLinkSave(save)) ? "Unplugged. Your game carries on from where the link left it." : "Unplugged.");
       }
       endLink(lost ? "Unplugged. The link’s save couldn’t be recovered, so your save from before is kept." : link.phase === "linked" ? "Unplugged." : null);
     } catch (err) {

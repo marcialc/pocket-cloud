@@ -1,4 +1,4 @@
-import { HASH_PATTERN, MAX_SRAM_BYTES, base64ToBytes } from "../shared/api";
+import { HASH_PATTERN, MAX_LINK_STATE_BYTES, MAX_SRAM_BYTES, base64ToBytes } from "../shared/api";
 import { normalizeFriendCode } from "../shared/social";
 import { json, methodNotAllowed, readLimited } from "./http";
 import { socialStub } from "./social";
@@ -12,15 +12,19 @@ import { socialStub } from "./social";
  *   GET  /api/link/:friendCode          { state, slot?, friendPluggedIn, saveWaiting, error? }
  *                                       (saveWaiting: the romHash of your save
  *                                       waiting to be picked up, or null)
- *   POST /api/link/:friendCode/plug     { romHash, sram? } plug in the cable with
- *                                       a game from your cloud library and your
- *                                       save (base64); linked once both have
+ *   POST /api/link/:friendCode/plug     { romHash, sram?, state? } plug in the cable
+ *                                       with a game from your cloud library, your
+ *                                       save (base64) and where the game is (a
+ *                                       snapshot: mGBA's own, zlib, base64), so
+ *                                       it carries on from there; linked once
+ *                                       both have
  *   GET  /api/link/:friendCode/ws       WebSocket for your screen while linked
- *   POST /api/link/:friendCode/unplug   ends the link: { sram, romHash } is your save
- *                                       from it, or { ended } if there was none
- *                                       (not started, failed, or { saveLost })
- *   GET  /api/link/:friendCode/save     { sram, romHash } after your friend ended it (or
- *                                       it timed out), once; saveWaiting says so
+ *   POST /api/link/:friendCode/unplug   ends the link: { sram, state?, romHash } is your
+ *                                       save from it and where the game was left
+ *                                       (as plug takes it), or { ended } if there
+ *                                       was none (not started, failed, or { saveLost })
+ *   GET  /api/link/:friendCode/save     { sram, state?, romHash } after your friend ended
+ *                                       it (or it timed out), once; saveWaiting says so
  *
  * States: empty, waiting (one plugged in), starting, linked, ending, failed
  * (error says why; the next plug or unplug clears it).
@@ -100,23 +104,36 @@ function view(status: LinkRoomStatus, playerId: string, friendId: string) {
   };
 }
 
-async function readPlug(request: Request): Promise<{ romHash: string; sram?: string } | { error: string }> {
-  // A 128 KiB save is about 175 KB of base64.
-  const bytes = await readLimited(request, 256 * 1024);
+type Plug = { romHash: string; sram?: string; state?: string };
+
+async function readPlug(request: Request): Promise<Plug | { error: string }> {
+  // A 128 KiB save is about 175 KB of base64, a snapshot at most 1.4 MB.
+  const bytes = await readLimited(request, 2 * 1024 * 1024);
   if (!bytes) return { error: "invalid_body" };
-  let body: { romHash?: unknown; sram?: unknown };
+  let body: { romHash?: unknown; sram?: unknown; state?: unknown };
   try {
     body = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return { error: "invalid_body" };
   }
   if (typeof body.romHash !== "string" || !HASH_PATTERN.test(body.romHash)) return { error: "invalid_rom_hash" };
-  if (body.sram === undefined) return { romHash: body.romHash };
-  if (typeof body.sram !== "string") return { error: "invalid_sram" };
-  try {
-    if (base64ToBytes(body.sram).length > MAX_SRAM_BYTES) return { error: "invalid_sram" };
-  } catch {
-    return { error: "invalid_sram" };
+  const plug: Plug = { romHash: body.romHash };
+  if (body.sram !== undefined) {
+    if (!fitsBase64(body.sram, MAX_SRAM_BYTES)) return { error: "invalid_sram" };
+    plug.sram = body.sram;
   }
-  return { romHash: body.romHash, sram: body.sram };
+  if (body.state !== undefined) {
+    if (!fitsBase64(body.state, MAX_LINK_STATE_BYTES)) return { error: "invalid_state" };
+    plug.state = body.state;
+  }
+  return plug;
+}
+
+function fitsBase64(value: unknown, maxBytes: number): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return base64ToBytes(value).length <= maxBytes;
+  } catch {
+    return false;
+  }
 }

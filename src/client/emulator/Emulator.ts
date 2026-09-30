@@ -55,12 +55,19 @@ export interface Emulator {
    */
   saveState?(): Promise<Uint8Array | null>;
   /**
-   * Carry on from a saveState() snapshot of the same ROM instead of powering
-   * on. Call after loadRom(), loadSram() and setClock(), before start(). Throws
-   * if the snapshot doesn't fit this core; the console is then left as it was
-   * (cores that start asynchronously find out then, and boot normally).
-   * The cartridge clock resumes from the snapshot's time and catches up with
-   * real time at the next reset().
+   * The same snapshot in the core's own format, without the frontend's
+   * wrapping (RetroArch's): what the link server's mGBA loads, and what it
+   * hands back. loadState() takes either.
+   */
+  coreState?(): Promise<Uint8Array | null>;
+  /**
+   * Carry on from a saveState() or coreState() snapshot of the same ROM instead
+   * of powering on. Call after loadRom(), loadSram() and setClock(), before
+   * start(); cores that start asynchronously also take one while running, for
+   * the next reset(). Throws if the snapshot doesn't fit this core; the console
+   * is then left as it was (cores that start asynchronously find out then, and
+   * boot normally). The cartridge clock resumes from the snapshot's time and
+   * catches up with real time at the next reset().
    */
   loadState?(data: Uint8Array): void;
   /**

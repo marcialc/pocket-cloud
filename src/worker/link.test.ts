@@ -92,6 +92,7 @@ describe("link play", () => {
     const [a, b] = await friends("Malformed");
     expect((await call(a.cookie, "POST", `/link/${b.code}/plug`, { romHash: "nope" })).status).toBe(400);
     expect((await call(a.cookie, "POST", `/link/${b.code}/plug`, { romHash: a.romHash, sram: 5 })).status).toBe(400);
+    expect((await call(a.cookie, "POST", `/link/${b.code}/plug`, { romHash: a.romHash, state: "not base64!" })).status).toBe(400);
     expect((await call(a.cookie, "GET", `/link/${b.code}/plug`)).status).toBe(405);
   });
 
@@ -121,6 +122,17 @@ describe("link play", () => {
     expect(await (await call(b.cookie, "GET", `/link/${a.code}/save`)).json()).toEqual({ sram: btoa("save of player 2"), romHash: b.romHash });
     expect(await (await call(b.cookie, "GET", `/link/${a.code}`)).json()).toMatchObject({ saveWaiting: null });
     expect((await call(b.cookie, "GET", `/link/${a.code}/save`)).status).toBe(404);
+  });
+
+  it("passes the snapshot each friend plugged in with on to the link, and back", async () => {
+    const [a, b] = await friends("Snapshot");
+    await call(a.cookie, "POST", `/link/${b.code}/plug`, { romHash: a.romHash, sram: btoa("my save"), state: btoa("where I am") });
+    await call(b.cookie, "POST", `/link/${a.code}/plug`, { romHash: b.romHash });
+
+    const unplug = await call(a.cookie, "POST", `/link/${b.code}/unplug`);
+    expect(await unplug.json()).toEqual({ sram: btoa("save of player 1"), state: btoa("where I am"), romHash: a.romHash });
+    // Plugged in without one (an older app): just the save.
+    expect(await (await call(b.cookie, "GET", `/link/${a.code}/save`)).json()).toEqual({ sram: btoa("save of player 2"), romHash: b.romHash });
   });
 
   it("wants a WebSocket for the screen", async () => {

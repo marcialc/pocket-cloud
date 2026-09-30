@@ -24,10 +24,16 @@
  *                                   "viewers":[player 1's sockets, player 2's]}
  *       PUT  /players/N/rom        the ROM (waiting only)
  *       PUT  /players/N/save       the save, may be empty (waiting only)
+ *       PUT  /players/N/state      a snapshot to carry on from instead of
+ *                                  powering on, may be empty (waiting only)
  *       POST /start                both ROMs needed
  *       POST /stop                 disconnects players, writes the saves
  *       GET  /players/N/save       the save (stopped only)
- *     Files go to the work directory (default /tmp/linkd).
+ *       GET  /players/N/state      a snapshot of where the game was left
+ *                                  (stopped only)
+ *     Files go to the work directory (default /tmp/linkd). Snapshots are
+ *     mGBA's own (the app's RetroArch core's, unwrapped), battery save
+ *     included; the battery save sent with one is the one it holds.
  *
  * WebSocket messages, all binary. Server to client:
  *   0x00 player(u8) width(u16) height(u16)   hello, once
@@ -54,7 +60,10 @@
 #include <mgba/core/core.h>
 #include <mgba/core/lockstep.h>
 #include <mgba/core/log.h>
+#include <mgba/core/serialize.h>
 #include <mgba/core/thread.h>
+#include <mgba/internal/gba/gba.h>
+#include <mgba/internal/gba/sio.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 #include <mgba-util/audio-buffer.h>
 #include <mgba-util/vfs.h>
@@ -108,10 +117,15 @@ struct Player {
 	int index;
 	const char* romPath;
 	const char* savePath;
+	/* Snapshot to carry on from, and where the last one is written; NULL
+	 * outside session mode. */
+	const char* statePath;
 	struct mCore* core;
 	struct mCoreThread thread;
 	struct mLockstepThreadUser user;
 	struct GBASIOLockstepDriver driver;
+	/* The cable is in this GBA's port (set by onReset). */
+	atomic_bool pluggedIn;
 	mColor* video;
 	unsigned width;
 	unsigned height;
@@ -169,8 +183,9 @@ static void onStart(struct mCoreThread* thread) {
 	player->user.d.requestedId = requestedId;
 	GBASIOLockstepDriverCreate(&player->driver, &player->user.d);
 	GBASIOLockstepCoordinatorAttach(&coordinator, &player->driver);
-	thread->core->setPeripheral(thread->core, mPERIPH_GBA_LINK_PORT, &player->driver.d);
 	clock_gettime(CLOCK_MONOTONIC, &player->nextFrame);
+	/* The cable goes into the port in onReset, once the game is where it
+	 * carries on from. */
 }
 
 /* clock_nanosleep with TIMER_ABSTIME isn't on macOS, so sleep the difference. */
@@ -245,6 +260,71 @@ static void publishFrame(struct Player* player) {
 	pthread_mutex_unlock(&player->frameLock);
 }
 
+/* Snapshots don't keep the timer that ends a transfer on the cable, so a game
+ * snapshotted mid-transfer would wait for it forever. End it the way pulling
+ * the cable does: nothing came back. */
+static void endTransfer(struct mCore* core) {
+	struct GBASIO* sio = &((struct GBA*) core->board)->sio;
+	mTimingDeschedule(&sio->p->timing, &sio->completeEvent);
+	uint16_t none[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+	switch (sio->mode) {
+	case GBA_SIO_MULTI:
+		if (GBASIOMultiplayerIsBusy(sio->siocnt)) {
+			GBASIOMultiplayerFinishTransfer(sio, none, 0);
+		}
+		break;
+	case GBA_SIO_NORMAL_8:
+		if (GBASIONormalIsStart(sio->siocnt)) {
+			GBASIONormal8FinishTransfer(sio, 0xFF, 0);
+		}
+		break;
+	case GBA_SIO_NORMAL_32:
+		if (GBASIONormalIsStart(sio->siocnt)) {
+			GBASIONormal32FinishTransfer(sio, 0xFFFFFFFF, 0);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+/* Carries on from the snapshot sent for this player, if any; a snapshot that
+ * doesn't load leaves the game powered on as usual. */
+static void loadSnapshot(struct Player* player, struct mCore* core) {
+	if (!player->statePath) {
+		return;
+	}
+	struct VFile* vf = VFileOpen(player->statePath, O_RDONLY);
+	if (!vf) {
+		return;
+	}
+	if (vf->size(vf) <= 0) {
+		vf->close(vf);
+		return;
+	}
+	bool loaded = mCoreLoadStateNamed(core, vf, SAVESTATE_RTC);
+	vf->close(vf);
+	if (loaded) {
+		endTransfer(core);
+		fprintf(stderr, "player %d: carrying on from the snapshot\n", player->index + 1);
+	} else {
+		fprintf(stderr, "player %d: couldn't load the snapshot, powering on instead\n", player->index + 1);
+		core->reset(core);
+	}
+}
+
+/* After power-on: carry on from the snapshot, then plug the cable in. With
+ * the cable already in, loading restarts a transfer the snapshot was in the
+ * middle of, and the GBA sleeps waiting for it for good. Plugged in, then
+ * reset: the order a GBA got at power-on when the cable went in first. */
+static void onReset(struct mCoreThread* thread) {
+	struct Player* player = thread->userData;
+	loadSnapshot(player, thread->core);
+	thread->core->setPeripheral(thread->core, mPERIPH_GBA_LINK_PORT, &player->driver.d);
+	player->driver.d.reset(&player->driver.d);
+	atomic_store(&player->pluggedIn, true);
+}
+
 static void onFrame(struct mCoreThread* thread) {
 	struct Player* player = thread->userData;
 	if (readResults) {
@@ -296,6 +376,7 @@ static bool setUpPlayer(struct Player* player) {
 	memset(&player->thread, 0, sizeof(player->thread));
 	player->thread.core = player->core;
 	player->thread.startCallback = onStart;
+	player->thread.resetCallback = onReset;
 	player->thread.frameCallback = onFrame;
 	player->thread.userData = player;
 	player->thread.logger.logger = &logger;
@@ -470,7 +551,8 @@ static enum SessionState sessionState = SESSION_WAITING;
 static struct Viewer* viewers[MAX_VIEWERS];
 static int viewerCount;
 static const char* workDir = "/tmp/linkd";
-static char workPaths[PLAYERS][2][4096];
+/* Per player: ROM, save, snapshot. */
+static char workPaths[PLAYERS][3][4096];
 
 static bool addViewer(struct Viewer* viewer) {
 	pthread_mutex_lock(&sessionLock);
@@ -568,9 +650,21 @@ static bool startSession(void) {
 		}
 	}
 	for (int i = 0; i < PLAYERS; ++i) {
+		atomic_store(&players[i].pluggedIn, false);
 		if (!mCoreThreadStart(&players[i].thread)) {
 			fprintf(stderr, "player %d: couldn't start\n", i + 1);
 			return false;
+		}
+		/* One at a time: the first on the cable is the parent until the
+		 * other plugs in, and a game that doesn't set up its link again
+		 * (one carrying on from a snapshot) keeps the place it saw. */
+		struct timespec poll = { 0, 1000000L };
+		for (int waited = 0; !atomic_load(&players[i].pluggedIn); ++waited) {
+			if (waited == 10000) {
+				fprintf(stderr, "player %d: the cable never went in\n", i + 1);
+				return false;
+			}
+			nanosleep(&poll, NULL);
 		}
 	}
 	return true;
@@ -602,6 +696,16 @@ static void stopSession(void) {
 		 * size, which is what the app's core stores too. */
 		void* sram = NULL;
 		size_t size = players[i].core->savedataClone(players[i].core, &sram);
+		/* Where the game was left, for the app to carry on from (the same
+		 * flags as its core's snapshots). */
+		endTransfer(players[i].core);
+		struct VFile* state = players[i].statePath ? VFileOpen(players[i].statePath, O_CREAT | O_TRUNC | O_RDWR) : NULL;
+		if (players[i].statePath && (!state || !mCoreSaveStateNamed(players[i].core, state, SAVESTATE_SAVEDATA | SAVESTATE_RTC))) {
+			fprintf(stderr, "player %d: couldn't take a snapshot\n", i + 1);
+		}
+		if (state) {
+			state->close(state);
+		}
 		players[i].core->deinit(players[i].core);
 		if (size && !writeFile(players[i].savePath, sram, size)) {
 			fprintf(stderr, "player %d: couldn't trim the save\n", i + 1);
@@ -609,7 +713,7 @@ static void stopSession(void) {
 		free(sram);
 	}
 	GBASIOLockstepCoordinatorDeinit(&coordinator);
-	fprintf(stderr, "session stopped, saves written\n");
+	fprintf(stderr, "session stopped, saves and snapshots written\n");
 }
 
 static bool writeFile(const char* path, const uint8_t* data, size_t length) {
@@ -648,8 +752,8 @@ static bool onHttp(const char* method, const char* path, const uint8_t* body, si
 	int index;
 	char kind[8];
 	bool playerPath = sscanf(path, "/players/%d/%7s", &index, kind) == 2 && index >= 1 && index <= PLAYERS &&
-	                  (!strcmp(kind, "rom") || !strcmp(kind, "save"));
-	int file = playerPath && !strcmp(kind, "save");
+	                  (!strcmp(kind, "rom") || !strcmp(kind, "save") || !strcmp(kind, "state"));
+	int file = !playerPath ? 0 : !strcmp(kind, "save") ? 1 : !strcmp(kind, "state") ? 2 : 0;
 
 	pthread_mutex_lock(&sessionLock);
 	enum SessionState state = sessionState;
@@ -681,7 +785,7 @@ static bool onHttp(const char* method, const char* path, const uint8_t* body, si
 			respondText(response, 409, "{\"error\":\"not_stopped\"}");
 			return true;
 		}
-		response->body = readFile(workPaths[index - 1][1], &response->length);
+		response->body = readFile(workPaths[index - 1][file], &response->length);
 		response->status = response->body ? 200 : 404;
 		return true;
 	}
@@ -837,8 +941,10 @@ int main(int argc, char** argv) {
 		if (sessionMode) {
 			snprintf(workPaths[i][0], sizeof(workPaths[i][0]), "%s/player%d.gba", workDir, i + 1);
 			snprintf(workPaths[i][1], sizeof(workPaths[i][1]), "%s/player%d.sav", workDir, i + 1);
+			snprintf(workPaths[i][2], sizeof(workPaths[i][2]), "%s/player%d.state", workDir, i + 1);
 			players[i].romPath = workPaths[i][0];
 			players[i].savePath = workPaths[i][1];
+			players[i].statePath = workPaths[i][2];
 		} else {
 			players[i].romPath = paths[i * 2];
 			players[i].savePath = paths[i * 2 + 1];

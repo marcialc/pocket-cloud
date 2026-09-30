@@ -7,7 +7,11 @@
 # Usage: ./build.sh            (output in .build/, override with WORK_DIR)
 set -euo pipefail
 
-MGBA_COMMIT=c3c8e5e813f245028de118a56734e1dc0f35ce2a
+# libretro's mGBA at the commit the app's GBA core is built from
+# (public/vendor/retroarch/VENDOR.md): snapshots move between the app and the
+# link server, and an mGBA only loads snapshots from its own version or older.
+MGBA_REPO=https://github.com/libretro/mgba.git
+MGBA_COMMIT=c758314a639aa0066e7b65a8341448181b73c804
 
 here="$(cd "$(dirname "$0")" && pwd)"
 work="${WORK_DIR:-$here/.build}"
@@ -17,7 +21,7 @@ mkdir -p "$work"
 if [ ! -d "$mgba/.git" ] || [ "$(git -C "$mgba" rev-parse HEAD)" != "$MGBA_COMMIT" ]; then
 	rm -rf "$mgba"
 	git init -q "$mgba"
-	git -C "$mgba" fetch -q --depth 1 https://github.com/mgba-emu/mgba.git "$MGBA_COMMIT"
+	git -C "$mgba" fetch -q --depth 1 "$MGBA_REPO" "$MGBA_COMMIT"
 	git -C "$mgba" checkout -q FETCH_HEAD
 fi
 

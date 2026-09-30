@@ -1,6 +1,7 @@
 import type { Nostalgist } from "nostalgist";
 import { PLATFORMS, type Button, type PlatformId } from "../../shared/platforms";
 import type { Emulator } from "./Emulator";
+import { coreStateOf } from "./retroarchState";
 
 /**
  * Emulator adapter for libretro cores run by RetroArch through Nostalgist
@@ -108,8 +109,10 @@ export class NostalgistEmulator implements Emulator {
   private sramReal = false;
   /** Loaded while the game ran; applied by the next reset(), like swapping the cartridge's battery RAM. */
   private sramToLoad: Uint8Array | null = null;
-  /** From loadState(): the first launch carries on from it. */
+  /** From loadState(): the next launch (the first, or a reset's) carries on from it. */
   private stateToLoad: Uint8Array<ArrayBuffer> | null = null;
+  /** The last saveState() asked for: RetroArch writes every snapshot to the same file, so one at a time. */
+  private snapshotting: Promise<unknown> = Promise.resolve();
   private sramDirty = false;
   private sramTimer: ReturnType<typeof setInterval> | null = null;
   private readonly sramListeners = new Set<() => void>();
@@ -177,8 +180,10 @@ export class NostalgistEmulator implements Emulator {
       this.resetQueued = true;
       return;
     }
-    // RetroArch only reads the .srm when a game loads, so a new save needs a fresh launch.
-    if (this.sramToLoad) this.relaunch();
+    // RetroArch only reads the .srm when a game loads, so a new save needs a fresh launch. So
+    // does a snapshot to carry on from, and that launch needs the save the game has now.
+    if (this.stateToLoad && !this.sramToLoad && this.sram) this.sramToLoad = this.sram.slice();
+    if (this.sramToLoad || this.stateToLoad) this.relaunch();
     else this.nostalgist!.sendCommand("RESET");
   }
 
@@ -215,7 +220,18 @@ export class NostalgistEmulator implements Emulator {
     return () => this.sramListeners.delete(listener);
   }
 
-  async saveState(): Promise<Uint8Array | null> {
+  saveState(): Promise<Uint8Array | null> {
+    const taking = this.snapshotting.catch(() => undefined).then(() => this.takeState());
+    this.snapshotting = taking;
+    return taking;
+  }
+
+  async coreState(): Promise<Uint8Array | null> {
+    const file = await this.saveState();
+    return file && coreStateOf(file);
+  }
+
+  private async takeState(): Promise<Uint8Array | null> {
     const core = this.liveCore();
     // RetroArch writes a snapshot from its frame loop, which stops while paused and in a hidden tab:
     // asking then would only time out (and hold up the next snapshot).
@@ -238,10 +254,9 @@ export class NostalgistEmulator implements Emulator {
     }
   }
 
-  /** Applied once RetroArch runs the game (start() launches it asynchronously). */
+  /** Applied once RetroArch runs the game: start() launches it asynchronously, and a reset() relaunches it. */
   loadState(data: Uint8Array): void {
     if (!this.rom) throw new Error("No ROM loaded.");
-    if (this.started) throw new Error("Load a snapshot before start().");
     this.stateToLoad = data.slice();
   }
 

@@ -9,20 +9,24 @@ import { DurableObject } from "cloudflare:workers";
  * friends) and says who is asking with the X-Player-Id header.
  *
  *   GET  /rooms/:room          the room's state (see RoomStatus)
- *   POST /rooms/:room/plug     {romHash, sram?} plug in the cable with this
- *                              game and save (base64); the link starts once
- *                              both players have
+ *   POST /rooms/:room/plug     {romHash, sram?, state?} plug in the cable
+ *                              with this game and save (base64), and where
+ *                              the game is (a snapshot: mGBA's own, zlib,
+ *                              base64); the link starts once both players
+ *                              have
  *   GET  /rooms/:room/ws       WebSocket for the caller's screen (linked only);
  *                              protocol in link-server/src/linkd.c
  *   POST /rooms/:room/unplug   ends the link for both and answers the
- *                              caller's save ({ sram }), or { ended } when
- *                              there was no link to take a save from
+ *                              caller's save ({ sram, state? }), or { ended }
+ *                              when there was no link to take a save from
  *   GET  /rooms/:room/save     the caller's save from the last link, once:
- *                              { sram, romHash } (the game it belongs to)
+ *                              { sram, state?, romHash } (the game it
+ *                              belongs to; state as plugging in takes it)
  *
  * While linked, both games run in one container (linkd), which this Durable
  * Object starts, feeds with the two ROMs (each from its owner's library) and
- * saves, and stops again. Every way a link can go wrong (linkd failing,
+ * saves (and snapshots, so each game carries on from where it was instead of
+ * powering on), and stops again. Every way a link can go wrong (linkd failing,
  * the container dying, a start that never finished) ends in a state the
  * next plug or unplug clears, so a pair of friends is never stuck.
  *
@@ -37,6 +41,9 @@ const PLAYER_ID = /^[0-9a-f]{64}$/;
 const ROM_HASH = /^[0-9a-f]{64}$/;
 const ROOM_NAME = /^[A-Za-z0-9:_-]{1,200}$/;
 const MAX_SRAM_BYTES = 128 * 1024;
+/** A snapshot as sent (compressed), and unpacked: mGBA's is about 400 KB plus the save. */
+const MAX_STATE_BYTES = 1024 * 1024;
+const MAX_UNPACKED_STATE_BYTES = 2 * 1024 * 1024;
 
 const START_TIMEOUT_MS = 60_000;
 
@@ -44,8 +51,8 @@ type RoomState = "empty" | "waiting" | "starting" | "linked" | "ending" | "faile
 
 type Seat = { playerId: string; romHash: string; slot: 1 | 2 };
 
-/** A player's save from a link that ended, kept until they pick it up. */
-type Result = { romHash: string; sram: Uint8Array };
+/** A player's save from a link that ended, and where the game was (compressed), kept until they pick it up. */
+type Result = { romHash: string; sram: Uint8Array; state?: Uint8Array };
 
 type RoomStatus = {
   state: RoomState;
@@ -117,7 +124,7 @@ export class LinkRoom extends DurableObject<Env> {
   }
 
   private async plug(playerId: string, request: Request): Promise<Response> {
-    let body: { romHash?: unknown; sram?: unknown };
+    let body: { romHash?: unknown; sram?: unknown; state?: unknown };
     try {
       body = await request.json();
     } catch {
@@ -133,6 +140,17 @@ export class LinkRoom extends DurableObject<Env> {
         return json({ error: "invalid_sram" }, 400);
       }
       if (sram.length > MAX_SRAM_BYTES) return json({ error: "invalid_sram" }, 400);
+    }
+    // No snapshot (an older app, or it couldn't take one) powers the game on from its save.
+    let snapshot: Uint8Array = new Uint8Array(0);
+    if (body.state !== undefined) {
+      if (typeof body.state !== "string") return json({ error: "invalid_state" }, 400);
+      try {
+        snapshot = base64ToBytes(body.state);
+      } catch {
+        return json({ error: "invalid_state" }, 400);
+      }
+      if (snapshot.length > MAX_STATE_BYTES) return json({ error: "invalid_state" }, 400);
     }
     // A save from the last link that this player hasn't picked up yet would
     // be lost if a new link started, so they collect it first.
@@ -155,7 +173,13 @@ export class LinkRoom extends DurableObject<Env> {
     const slot: 1 | 2 = seats.some((seat) => seat.slot === 1) ? 2 : 1;
     seats = [...seats, { playerId, romHash: body.romHash, slot }];
     const starting = seats.length === 2;
-    await this.ctx.storage.put({ seats, [`sram:${slot}`]: sram, state: starting ? "starting" : "waiting", since: Date.now() });
+    await this.ctx.storage.put({
+      seats,
+      [`sram:${slot}`]: sram,
+      [`snapshot:${slot}`]: snapshot,
+      state: starting ? "starting" : "waiting",
+      since: Date.now(),
+    });
     await this.ctx.storage.setAlarm(Date.now() + (starting ? this.checkEveryMs : this.waitMs));
     if (starting) {
       try {
@@ -185,6 +209,8 @@ export class LinkRoom extends DurableObject<Env> {
       await this.linkd(`/players/${seat.slot}/rom`, { method: "PUT", body: await rom.arrayBuffer() });
       const sram = (await this.ctx.storage.get<Uint8Array>(`sram:${seat.slot}`)) ?? new Uint8Array(0);
       await this.linkd(`/players/${seat.slot}/save`, { method: "PUT", body: sram });
+      const state = (await this.ctx.storage.get<Uint8Array>(`snapshot:${seat.slot}`)) ?? new Uint8Array(0);
+      await this.linkd(`/players/${seat.slot}/state`, { method: "PUT", body: await unpackState(state) });
     }
     await this.linkd("/start", { method: "POST" });
   }
@@ -248,6 +274,13 @@ export class LinkRoom extends DurableObject<Env> {
       for (const seat of await this.seats()) {
         const response = await this.linkd(`/players/${seat.slot}/save`);
         const result: Result = { romHash: seat.romHash, sram: new Uint8Array(await response.arrayBuffer()) };
+        // Without a snapshot the player still gets the save; the game powers on from it.
+        try {
+          const state = new Uint8Array(await (await this.linkd(`/players/${seat.slot}/state`)).arrayBuffer());
+          if (state.length) result.state = await pack(state, new CompressionStream("deflate"));
+        } catch (err) {
+          console.error(JSON.stringify({ message: "link snapshot lost", slot: seat.slot, error: String(err) }));
+        }
         await this.ctx.storage.put(`result:${seat.playerId}`, result);
       }
     } catch (err) {
@@ -297,7 +330,11 @@ export class LinkRoom extends DurableObject<Env> {
     const result = await this.ctx.storage.get<Result>(key);
     if (!result) return json({ error: "not_found" }, 404);
     await this.ctx.storage.delete(key);
-    return json({ sram: bytesToBase64(result.sram), romHash: result.romHash });
+    return json({
+      sram: bytesToBase64(result.sram),
+      ...(result.state ? { state: bytesToBase64(result.state) } : {}),
+      romHash: result.romHash,
+    });
   }
 
   private async state(): Promise<RoomState> {
@@ -316,7 +353,7 @@ export class LinkRoom extends DurableObject<Env> {
 
   /** Clears the session (not the saves waiting to be picked up). */
   private async reset(): Promise<void> {
-    await this.ctx.storage.delete(["state", "seats", "error", "since", "idleSince", "sram:1", "sram:2"]);
+    await this.ctx.storage.delete(["state", "seats", "error", "since", "idleSince", "sram:1", "sram:2", "snapshot:1", "snapshot:2"]);
     await this.ctx.storage.deleteAlarm();
   }
 
@@ -348,6 +385,39 @@ class LinkError extends Error {
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
+}
+
+/**
+ * A snapshot as plugging in sent it, unpacked for linkd; empty (the game
+ * powers on) if there's none or it doesn't unpack.
+ */
+async function unpackState(packed: Uint8Array): Promise<Uint8Array> {
+  if (!packed.length) return packed;
+  try {
+    return await pack(packed, new DecompressionStream("deflate"), MAX_UNPACKED_STATE_BYTES);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "snapshot didn't unpack, powering on", error: String(err) }));
+    return new Uint8Array(0);
+  }
+}
+
+/** Runs bytes through a (de)compression stream, refusing more than `limit` bytes out. */
+async function pack(bytes: Uint8Array, through: CompressionStream | DecompressionStream, limit = Infinity): Promise<Uint8Array> {
+  const stream = new Blob([bytes]).stream().pipeThrough<Uint8Array>(through);
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of stream) {
+    length += chunk.length;
+    if (length > limit) throw new Error("too_large");
+    chunks.push(chunk);
+  }
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
 }
 
 function base64ToBytes(base64: string): Uint8Array {

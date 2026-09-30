@@ -10,14 +10,17 @@ Stage: **working locally, not deployed.** `linkd` runs both GBAs and
 streams each screen (and sound) to its player over a WebSocket, taking
 button presses back. The `pocket-cloud-link` Worker (`worker/`) gives each
 pair of friends a `LinkRoom` Durable Object that starts the container, loads
-each player's ROM from their own cloud library plus the save they plugged in
-with, passes the WebSockets through, and hands the saves back on unplug. The
+each player's ROM from their own cloud library plus the save and snapshot
+they plugged in with (so each game carries on from where it was), passes the
+WebSockets through, and hands the saves and snapshots back on unplug. The
 pocket-cloud Worker's `/api/link/*` (`src/worker/link.ts`) checks sign-in
 and friendship and forwards to it. In the app, GBA games signed in with an
 email account get a **Link cable** button (`LinkPanel.tsx`, `GameScreen.tsx`):
-plugging in pauses the local game and sends its save, `LinkEmulator.ts` shows
-the streamed game and takes the controls, and unplugging (either player, or
-the idle timeout) brings the save back into the local game and the cloud.
+plugging in snapshots and pauses the local game and sends its save and
+snapshot, `LinkEmulator.ts` shows the streamed game and takes the controls,
+and unplugging (either player, or the idle timeout) brings the save back into
+the local game and the cloud, and the local game carries on from where the
+link left it.
 
 A link nobody watches ends after `IDLE_MS` (saves kept for pickup), a player
 waiting alone is taken out after `WAIT_MS`, and a link that failed (linkd or
@@ -124,5 +127,7 @@ received, so the link can be tested without a commercial game or a save.
 
 ## License
 
-mGBA is MPL-2.0. `linkd` links it unmodified; if we ever patch mGBA's files,
-the patched files must be published.
+mGBA is MPL-2.0. `linkd` links libretro's copy of it
+(<https://github.com/libretro/mgba>, the commit in `build.sh`, the same one the
+app's GBA core is built from, so snapshots load on both sides) unmodified; if
+we ever patch mGBA's files, the patched files must be published.

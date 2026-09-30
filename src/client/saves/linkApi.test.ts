@@ -1,5 +1,6 @@
+import { unzlibSync, zlibSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bytesToBase64 } from "../../shared/api";
+import { base64ToBytes, bytesToBase64 } from "../../shared/api";
 import { LinkError, plugIn, takeLinkSave, unplug } from "./linkApi";
 
 const ROM = "a".repeat(64);
@@ -15,7 +16,21 @@ function answer(body: unknown, status = 200) {
 describe("linkApi", () => {
   it("hands back the save from a link with the game it belongs to", async () => {
     answer({ sram: bytesToBase64(new Uint8Array([1, 2, 3])), romHash: ROM });
-    expect(await unplug("ABCD1234")).toEqual({ save: { sram: new Uint8Array([1, 2, 3]), romHash: ROM }, lost: false });
+    expect(await unplug("ABCD1234")).toEqual({ save: { sram: new Uint8Array([1, 2, 3]), state: null, romHash: ROM }, lost: false });
+  });
+
+  it("brings back where the game was left, even when it never saved", async () => {
+    const state = bytesToBase64(zlibSync(new Uint8Array([9, 9, 9])));
+    answer({ sram: bytesToBase64(new Uint8Array([1])), state, romHash: ROM });
+    expect(await takeLinkSave("ABCD1234")).toEqual({ sram: new Uint8Array([1]), state: new Uint8Array([9, 9, 9]), romHash: ROM });
+    answer({ sram: bytesToBase64(new Uint8Array(16).fill(0xff)), state, romHash: ROM });
+    expect(await takeLinkSave("ABCD1234")).toEqual({ sram: null, state: new Uint8Array([9, 9, 9]), romHash: ROM });
+  });
+
+  it("keeps the save when the snapshot doesn't unpack", async () => {
+    vi.spyOn(console, "warn").mockImplementationOnce(() => {});
+    answer({ sram: bytesToBase64(new Uint8Array([1])), state: bytesToBase64(new Uint8Array([1, 2, 3])), romHash: ROM });
+    expect(await takeLinkSave("ABCD1234")).toEqual({ sram: new Uint8Array([1]), state: null, romHash: ROM });
   });
 
   it("treats a blank save as none: the game never saved during the link", async () => {
@@ -41,6 +56,14 @@ describe("linkApi", () => {
     await plugIn("ABCD1234", ROM, null);
     const bodies = fetchMock.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string));
     expect(bodies).toEqual([{ romHash: ROM, sram: bytesToBase64(new Uint8Array([7])) }, { romHash: ROM }]);
+  });
+
+  it("plugs in with where the game is, compressed", async () => {
+    const fetchMock = answer({ state: "waiting", slot: 1, friendPluggedIn: false, saveWaiting: null });
+    await plugIn("ABCD1234", ROM, null, new Uint8Array(1000).fill(3));
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(unzlibSync(base64ToBytes(body.state))).toEqual(new Uint8Array(1000).fill(3));
+    expect(body.state.length).toBeLessThan(100);
   });
 
   it("reports the server's refusal by its code", async () => {

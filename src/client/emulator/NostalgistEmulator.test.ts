@@ -446,9 +446,14 @@ describe("NostalgistEmulator", () => {
       expect(core.loadedState).toEqual(bytes(1, 2, 3));
     });
 
-    it("only takes a snapshot before start", async () => {
-      const { emu } = await started();
-      expect(() => emu.loadState(bytes(1))).toThrow();
+    it("carries on from a snapshot loaded while running at the next reset, which relaunches the game", async () => {
+      const { emu, core } = await started();
+      emu.loadState(bytes(4, 5));
+      expect(core.loadState).not.toHaveBeenCalled();
+      emu.reset();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(nostalgists.at(-1)).not.toBe(core);
+      expect(nostalgists.at(-1)!.loadedState).toEqual(bytes(4, 5));
     });
 
     it("boots normally when the snapshot doesn't load", async () => {
@@ -460,6 +465,19 @@ describe("NostalgistEmulator", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(emu.running).toBe(true);
       expect(warn).toHaveBeenCalled();
+    });
+
+    it("keeps the game's save when a reset relaunches it for a snapshot", async () => {
+      const { emu } = await loaded();
+      emu.loadSram(bytes(5, 6));
+      emu.start();
+      await vi.advanceTimersByTimeAsync(0);
+      emu.loadState(bytes(4));
+      emu.reset();
+      await vi.advanceTimersByTimeAsync(0);
+      const relaunched = nostalgists.at(-1)!;
+      expect(relaunched.loadedState).toEqual(bytes(4));
+      expect(relaunched.bootSram).toEqual(bytes(5, 6));
     });
 
     it("doesn't load the snapshot again when a reset relaunches the game", async () => {
@@ -489,6 +507,27 @@ describe("NostalgistEmulator", () => {
       (document as unknown as { hidden: boolean }).hidden = true;
       expect(await emu.saveState()).toBeNull();
       expect(core.saveState).not.toHaveBeenCalled();
+    });
+
+    it("takes one snapshot at a time: RetroArch writes them all to the same file", async () => {
+      const { emu, core } = await started();
+      let written = (_: { state: Blob }) => {};
+      core.saveState.mockImplementationOnce(() => new Promise((resolve) => (written = resolve)));
+      const first = emu.saveState();
+      const second = emu.saveState();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(core.saveState).toHaveBeenCalledTimes(1);
+      written({ state: new Blob([bytes(1)]) });
+      expect(await first).toEqual(bytes(1));
+      expect(await second).toEqual(bytes(7, 7, 7));
+      expect(core.saveState).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives the core's own snapshot for the link, without RetroArch's wrapping", async () => {
+      const { emu, core } = await started();
+      const file = new Uint8Array([..."RASTATE"].map((c) => c.charCodeAt(0)).concat(1, 0x4d, 0x45, 0x4d, 0x20, 3, 0, 0, 0, 9, 8, 7, 0, 0, 0, 0, 0));
+      core.saveState.mockResolvedValueOnce({ state: new Blob([file]) });
+      expect(await emu.coreState()).toEqual(bytes(9, 8, 7));
     });
 
     it("gives up on a snapshot RetroArch never writes", async () => {

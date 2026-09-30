@@ -1,3 +1,4 @@
+import { unzlibSync, zlibSync } from "fflate";
 import { base64ToBytes, bytesToBase64 } from "../../shared/api";
 
 /**
@@ -18,8 +19,12 @@ export type LinkStatus = {
   error?: string;
 };
 
-/** A save from a link, for the game it was played in. */
-export type LinkSave = { sram: Uint8Array; romHash: string };
+/**
+ * What a link left, for the game it was played in: the save (null if the game
+ * never saved during it) and where the game was left (the core's own
+ * snapshot, null if the link server couldn't take one).
+ */
+export type LinkSave = { sram: Uint8Array | null; state: Uint8Array | null; romHash: string };
 
 /** The server refused, with its error code ("network" if it couldn't be reached). */
 export class LinkError extends Error {
@@ -53,24 +58,34 @@ export async function fetchLinkStatus(friendCode: string): Promise<LinkStatus> {
 }
 
 /**
- * Plug in the cable with this game and its save. When the friend is already
- * plugged in, this starts the link and answers once both games run, which
- * takes a few seconds.
+ * Plug in the cable with this game, its save and where it is (the core's own
+ * snapshot, so the link carries on from there; without one the game powers on
+ * from the save). When the friend is already plugged in, this starts the link
+ * and answers once both games run, which takes a few seconds.
  */
-export async function plugIn(friendCode: string, romHash: string, sram: Uint8Array | null): Promise<LinkStatus> {
-  const body = { romHash, ...(sram ? { sram: bytesToBase64(sram) } : {}) };
+export async function plugIn(
+  friendCode: string,
+  romHash: string,
+  sram: Uint8Array | null,
+  state: Uint8Array | null = null,
+): Promise<LinkStatus> {
+  const body = {
+    romHash,
+    ...(sram ? { sram: bytesToBase64(sram) } : {}),
+    // mGBA's snapshot is about 400 KB, mostly zeros and repeats.
+    ...(state ? { state: bytesToBase64(zlibSync(state)) } : {}),
+  };
   return (await call(`${room(friendCode)}/plug`, { method: "POST", body: JSON.stringify(body) }, 60_000)).json();
 }
 
 /**
- * Pull the cable, ending the link for both. `save` is your save from it:
- * null when the game made none (or the link hadn't started or had failed),
- * and then the save you plugged in with still stands. `lost` says the link
- * server couldn't hand the saves back.
+ * Pull the cable, ending the link for both. `save` is what it left: null when
+ * the link hadn't started or had failed, and then the save you plugged in
+ * with still stands. `lost` says the link server couldn't hand the saves back.
  */
 export async function unplug(friendCode: string): Promise<{ save: LinkSave | null; lost: boolean }> {
   const res = await call(`${room(friendCode)}/unplug`, { method: "POST" }, 30_000);
-  const body: { sram?: string; romHash?: string; saveLost?: boolean } = await res.json();
+  const body: LinkSaveBody & { saveLost?: boolean } = await res.json();
   return { save: toSave(body), lost: body.saveLost === true };
 }
 
@@ -89,17 +104,26 @@ export function linkSocketUrl(friendCode: string): string {
   return `${protocol}//${location.host}/api/link${room(friendCode)}/ws`;
 }
 
+type LinkSaveBody = { sram?: string; state?: string; romHash?: string };
+
 /**
  * An empty or blank save (every byte 0x00 or 0xFF, the fresh cartridge the
  * link server starts with) means the game never saved during the link:
- * nothing to keep, like the emulator's own getSram().
+ * nothing to keep, like the emulator's own getSram(). A snapshot that doesn't
+ * unpack is dropped: the game then carries on from the save alone.
  */
-function toSave(body: { sram?: string; romHash?: string }): LinkSave | null {
-  if (!body.sram || !body.romHash) return null;
-  const sram = base64ToBytes(body.sram);
-  const first = sram[0];
-  if ((first === 0x00 || first === 0xff) && sram.every((b) => b === first)) return null;
-  return { sram, romHash: body.romHash };
+function toSave(body: LinkSaveBody): LinkSave | null {
+  if (!body.romHash) return null;
+  let sram: Uint8Array | null = body.sram ? base64ToBytes(body.sram) : null;
+  const first = sram?.[0];
+  if (sram && (first === 0x00 || first === 0xff) && sram.every((b) => b === first)) sram = null;
+  let state: Uint8Array | null = null;
+  try {
+    state = body.state ? unzlibSync(base64ToBytes(body.state)) : null;
+  } catch (err) {
+    console.warn("The link's snapshot didn't unpack", err);
+  }
+  return sram || state ? { sram, state, romHash: body.romHash } : null;
 }
 
 export function linkErrorMessage(err: unknown): string {
