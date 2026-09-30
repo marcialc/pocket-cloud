@@ -685,6 +685,20 @@ kbd.empty { color: var(--ink-2); }
 .keys-hint { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: var(--on-bg-2); }
 .keys-hint kbd { min-width: 0; padding: 4px 6px 3px; font-size: 8px; }
 
+/* Fullscreen on a computer: drop the handheld so the LCD fills the display, and float the bars over it. */
+@media (not (pointer: coarse)) and (min-width: 641px) {
+  .game:fullscreen { position: relative; padding: 0; background: #000; }
+  .game:fullscreen .stage { position: absolute; inset: 0; --chrome-x: 0px; --chrome-y: 0px; }
+  .game:fullscreen .shell { padding: 0; gap: 0; background: none; box-shadow: none; border-radius: 0; }
+  .game:fullscreen .shell-top, .game:fullscreen .shell-foot, .game:fullscreen .power, .game:fullscreen .keys-hint { display: none; }
+  .game:fullscreen .bezel { padding: 0; border-radius: 0; background: none; box-shadow: none; }
+  .game:fullscreen .lcd { box-shadow: none; }
+  .game:fullscreen .game-bar { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); padding: 0 16px; }
+  .game:fullscreen .toolbar-wrap { position: absolute; z-index: 2; bottom: 16px; left: 50%; transform: translateX(-50%); }
+  .game.idle:fullscreen .game-bar { opacity: 0; transition: opacity 300ms var(--step); }
+  .game.idle:fullscreen .toolbar { opacity: 0; }
+}
+
 /* Phone menu sheet */
 .sheet-backdrop { place-items: end stretch; padding: 0; }
 .sheet {
