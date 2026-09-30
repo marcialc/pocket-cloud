@@ -25,6 +25,8 @@ export type Preferences = {
   reduceMotion: boolean;
   /** Vibrate on touch-gamepad presses (phones that support it). */
   haptics: boolean;
+  /** Hide the touch gamepad while a game controller is in use (until the screen is touched). */
+  hideTouchWithPad: boolean;
   /** How much of the space beside the controls the game screen fills, 0.5–1. */
   screenSize: number;
   /** Favorite games and groups in the library (follows the account when signed in). */
@@ -44,6 +46,7 @@ const DEFAULTS: Preferences = {
   uiSounds: false,
   reduceMotion: false,
   haptics: true,
+  hideTouchWithPad: true,
   screenSize: 1,
   shelf: EMPTY_SHELF,
 };

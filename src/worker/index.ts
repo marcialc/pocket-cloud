@@ -43,7 +43,7 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   GET    /api/saves/:romHash/history                    current save and earlier versions (with pictures)
  *   GET    /api/saves/:romHash/history/:revision          fetch one earlier version (with SRAM)
  *   POST   /api/saves/:romHash/history/:revision/restore  make an earlier version the current save
- *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
+ *   /api/roms/*                    cloud ROM library and cover images (email sign-in only), see roms.ts
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts

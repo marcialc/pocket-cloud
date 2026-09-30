@@ -1,11 +1,17 @@
 import {
+  COVER_TYPES,
   HASH_PATTERN,
+  MAX_CLOUD_COVERS,
+  MAX_COVER_BYTES,
   MAX_CLOUD_ROMS,
   MAX_ROM_BYTES,
   MIN_ROM_BYTES,
   sha256Hex,
+  type CloudCoverMeta,
   type CloudRomMeta,
+  type ListCoversResponse,
   type ListRomsResponse,
+  type PutCoverResponse,
 } from "../shared/api";
 import { json, methodNotAllowed, readLimited } from "./http";
 
@@ -16,6 +22,10 @@ import { json, methodNotAllowed, readLimited } from "./http";
  *   GET    /api/roms/:romHash        ROM bytes
  *   PUT    /api/roms/:romHash?name=&title=[&picked=1]   raw ROM bytes (application/octet-stream)
  *   DELETE /api/roms/:romHash
+ *   GET    /api/roms/covers          cover images the player picked, with their versions
+ *   GET    /api/roms/:romHash/cover  the image
+ *   PUT    /api/roms/:romHash/cover  image bytes (image/jpeg, png or webp)
+ *   DELETE /api/roms/:romHash/cover
  *
  * Objects live under roms/<playerId>/ and are only reachable through an email
  * session for that player; the anonymous key can't use them.
@@ -24,6 +34,9 @@ import { json, methodNotAllowed, readLimited } from "./http";
  * another browser that still has the file can't quietly put it back: uploads
  * of a removed game are refused (409 removed) unless the player picked the file
  * themselves (`picked=1`), which clears the marker.
+ *
+ * Covers live under covers/<playerId>/<romHash>, whether or not the game itself
+ * is in the account, so the picture follows the player to every device.
  */
 export async function handleRoms(request: Request, env: Env, url: URL, playerId: string): Promise<Response> {
   const prefix = `roms/${playerId}/`;
@@ -32,6 +45,16 @@ export async function handleRoms(request: Request, env: Env, url: URL, playerId:
     if (request.method !== "GET") return methodNotAllowed();
     const [roms, removed] = await Promise.all([listRoms(env, prefix), listKeys(env, removedPrefix)]);
     return json({ roms, removed } satisfies ListRomsResponse);
+  }
+
+  if (url.pathname === "/api/roms/covers") {
+    if (request.method !== "GET") return methodNotAllowed();
+    return json({ covers: await listCovers(env, `covers/${playerId}/`) } satisfies ListCoversResponse);
+  }
+  const cover = /^\/api\/roms\/([^/]+)\/cover$/.exec(url.pathname)?.[1];
+  if (cover !== undefined) {
+    if (!HASH_PATTERN.test(cover)) return json({ error: "invalid_rom_hash" }, 400);
+    return handleCover(request, env, `covers/${playerId}/`, cover);
   }
 
   const romHash = /^\/api\/roms\/([^/]+)$/.exec(url.pathname)?.[1];
@@ -146,4 +169,52 @@ function toMeta(prefix: string, object: R2Object): CloudRomMeta {
     size: object.size,
     uploadedAt: object.uploaded.getTime(),
   };
+}
+
+async function handleCover(request: Request, env: Env, prefix: string, romHash: string): Promise<Response> {
+  const key = prefix + romHash;
+  switch (request.method) {
+    case "GET": {
+      const object = await env.ROMS.get(key);
+      if (!object) return json({ error: "not_found" }, 404);
+      return new Response(object.body, {
+        headers: {
+          "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
+          "Content-Length": String(object.size),
+          "Cache-Control": "private, no-store",
+        },
+      });
+    }
+    case "PUT": {
+      const type = (request.headers.get("Content-Type") ?? "").split(";")[0]!.trim();
+      if (!(COVER_TYPES as readonly string[]).includes(type)) return json({ error: "invalid_cover_type" }, 415);
+      if (Number(request.headers.get("Content-Length") ?? 0) > MAX_COVER_BYTES) return json({ error: "payload_too_large" }, 413);
+      const data = await readLimited(request, MAX_COVER_BYTES);
+      if (!data) return json({ error: "payload_too_large" }, 413);
+      if (data.byteLength === 0) return json({ error: "invalid_cover" }, 400);
+      // Replacing one is always fine; a new one needs room.
+      if (!(await env.ROMS.head(key)) && (await countObjects(env, prefix, MAX_CLOUD_COVERS)) >= MAX_CLOUD_COVERS) {
+        return json({ error: "covers_full" }, 403);
+      }
+      const version = (await sha256Hex(data)).slice(0, 16);
+      await env.ROMS.put(key, data, { httpMetadata: { contentType: type }, customMetadata: { version } });
+      return json({ cover: { romHash, version } } satisfies PutCoverResponse);
+    }
+    case "DELETE":
+      await env.ROMS.delete(key);
+      return new Response(null, { status: 204 });
+    default:
+      return methodNotAllowed();
+  }
+}
+
+async function listCovers(env: Env, prefix: string): Promise<CloudCoverMeta[]> {
+  const covers: CloudCoverMeta[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.ROMS.list({ prefix, include: ["customMetadata"], ...(cursor ? { cursor } : {}) });
+    covers.push(...page.objects.map((o) => ({ romHash: o.key.slice(prefix.length), version: o.customMetadata?.version ?? o.etag })));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return covers;
 }

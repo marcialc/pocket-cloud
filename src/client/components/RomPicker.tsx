@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import type { CloudSaveMeta } from "../../shared/api";
 import { enabledExtensions } from "../../shared/platforms";
 import {
@@ -23,7 +23,8 @@ import { coverUrl } from "../../shared/covers";
 import { coverFor, loadCoverIndex, searchCovers, type CoverIndex } from "../covers";
 import type { Preferences } from "../preferences";
 import { listCloudSaves } from "../saves/cloudApi";
-import { deleteCustomCover, listCustomCovers, putCustomCover, shrinkCover } from "../saves/customCovers";
+import { syncCovers } from "../saves/coverSync";
+import { listCustomCovers, pickCustomCover, removeCustomCover, shrinkCover } from "../saves/customCovers";
 import { getLocalSave, requestPersistentStorage, storageUsage } from "../saves/localSaves";
 import type { LibraryEntry } from "../saves/romLibrary";
 import { decideLaunch } from "../saves/sync";
@@ -104,7 +105,7 @@ export function RomPicker({
   const [groupName, setGroupName] = useState<{ group: ShelfGroup | null } | null>(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ShelfGroup | null>(null);
   const [covers, setCovers] = useState<CoverIndex | null>(null);
-  /** Object URLs of the images picked as covers in this browser, by ROM hash. */
+  /** Object URLs of the images picked as covers (here, or on another device when signed in), by ROM hash. */
   const [customCovers, setCustomCovers] = useState<Record<string, string>>({});
   const [customCoversVersion, setCustomCoversVersion] = useState(0);
 
@@ -158,13 +159,30 @@ export function RomPicker({
         urls = Object.fromEntries(all.map((c) => [c.romHash, URL.createObjectURL(new Blob([c.data], { type: c.type }))]));
         setCustomCovers(urls);
       },
-      (err) => console.warn("Could not load the covers picked in this browser", err),
+      (err) => console.warn("Could not load the covers picked for games", err),
     );
     return () => {
       live = false;
       for (const url of Object.values(urls)) URL.revokeObjectURL(url);
     };
   }, [loadedLibrary, customCoversVersion]);
+
+  // Signed in: covers picked on any device show here too. Checked again whenever the page comes
+  // back into view, like the shelf.
+  const syncPickedCovers = useCallback(() => {
+    if (!account) return;
+    syncCovers().then(
+      (changed) => changed && setCustomCoversVersion((v) => v + 1),
+      (err) => console.warn("Could not sync the covers picked for games", err),
+    );
+  }, [account]);
+  useEffect(() => {
+    if (!account) return;
+    syncPickedCovers();
+    const onVisible = () => document.visibilityState === "visible" && syncPickedCovers();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [account, syncPickedCovers]);
 
   /** The picture on a game's card: an image picked here, then box art picked by name, then the ROM's own box art. */
   const coverOf = (rom: LibraryEntry): string | null => {
@@ -196,15 +214,16 @@ export function RomPicker({
     try {
       if (edit.cover.kind === "image" && edit.cover.blob) {
         const { blob } = edit.cover;
-        await putCustomCover({ romHash: rom.romHash, data: await blob.arrayBuffer(), type: blob.type });
+        await pickCustomCover(rom.romHash, await blob.arrayBuffer(), blob.type);
       } else if (edit.cover.kind !== "image" && customCovers[rom.romHash]) {
-        await deleteCustomCover(rom.romHash);
+        await removeCustomCover(rom.romHash);
       } else {
         return;
       }
       setCustomCoversVersion((v) => v + 1);
+      syncPickedCovers();
     } catch (err) {
-      console.warn("Could not save the cover picked in this browser", err);
+      console.warn("Could not save the cover picked for the game", err);
     }
   };
 
@@ -607,6 +626,7 @@ export function RomPicker({
                 : { kind: "auto" }
           }
           ownCover={covers && coverFor(covers, editing)}
+          signedIn={!!account}
           onCancel={() => setEditing(null)}
           onSave={(edit) => void saveEdit(editing, edit)}
         />
@@ -763,6 +783,7 @@ function EditGameDialog({
   index,
   initial,
   ownCover,
+  signedIn,
   onSave,
   onCancel,
 }: {
@@ -772,6 +793,8 @@ function EditGameDialog({
   initial: CoverDraft;
   /** The box art found for the ROM itself, if any. */
   ownCover: string | null;
+  /** An uploaded image follows the account to other devices. */
+  signedIn: boolean;
   onSave: (edit: GameEdit) => void;
   onCancel: () => void;
 }) {
@@ -840,7 +863,9 @@ function EditGameDialog({
                     : "No box art found for this game."
                   : cover.kind === "art"
                     ? cover.choice.name
-                    : "Your image. Only shows in this browser."}
+                    : signedIn
+                      ? "Your image. Shows on every device you sign in to."
+                      : "Your image. Only shows in this browser."}
               </p>
               <div className="row">
                 <button type="button" className="btn small" onClick={() => file.current?.click()}>

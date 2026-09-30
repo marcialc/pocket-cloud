@@ -131,6 +131,63 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
         </div>
       )}
 
+      <section className="stack-sm" aria-labelledby="settings-h">
+        <h3 id="settings-h" className="px h-section">
+          SETTINGS
+        </h3>
+        <div className="card settings">
+          <Setting
+            title="Cloud backup"
+            desc={
+              account
+                ? "Save files back up a few seconds after the game saves."
+                : "Save files back up a few seconds after the game saves. Only save data is uploaded, never the ROM."
+            }
+            on={prefs.cloudSync}
+            onChange={(cloudSync) => onPrefs({ cloudSync })}
+          />
+          {account && prefs.cloudSync && (
+            <Setting
+              title="Keep games in my account"
+              desc="Upload the ROM files you open, privately, so they’re ready on any device you sign in to."
+              on={prefs.cloudRoms === "on"}
+              onChange={(on) => onPrefs({ cloudRoms: on ? "on" : "off" })}
+            />
+          )}
+          <label className="setting">
+            <span>
+              <strong>Screen size</strong>
+              <small>How much of the window the game screen fills.</small>
+            </span>
+            <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} />
+          </label>
+          <Setting
+            title="Hide touch buttons with a controller"
+            desc="On a phone, the on-screen buttons step aside while you play with a game controller. Touch the screen to bring them back."
+            on={prefs.hideTouchWithPad}
+            onChange={(hideTouchWithPad) => onPrefs({ hideTouchWithPad })}
+          />
+          <Setting
+            title="UI sounds"
+            desc="Soft clicks when you press buttons in menus. Never during play."
+            on={prefs.uiSounds}
+            onChange={(uiSounds) => onPrefs({ uiSounds })}
+          />
+          <Setting
+            title="Reduce motion"
+            desc="Keep screens still. Follows your system setting unless you turn this on."
+            on={prefs.reduceMotion}
+            onChange={(reduceMotion) => onPrefs({ reduceMotion })}
+          />
+          <Setting
+            title="Remember games"
+            desc="Keep opened games in this browser for one-click play."
+            on={prefs.rememberRom}
+            onChange={(rememberRom) => onPrefs({ rememberRom })}
+          />
+        </div>
+      </section>
+
       {prefs.cloudSync && (
         <section className="stack-sm" aria-labelledby="saves-h">
           <h3 id="saves-h" className="px h-section">
@@ -224,57 +281,6 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
       )}
 
       {account === null && <PlayerKey onBeforeRestore={onBeforeRestore} />}
-
-      <section className="stack-sm" aria-labelledby="settings-h">
-        <h3 id="settings-h" className="px h-section">
-          SETTINGS
-        </h3>
-        <div className="card settings">
-          <Setting
-            title="Cloud backup"
-            desc={
-              account
-                ? "Save files back up a few seconds after the game saves."
-                : "Save files back up a few seconds after the game saves. Only save data is uploaded, never the ROM."
-            }
-            on={prefs.cloudSync}
-            onChange={(cloudSync) => onPrefs({ cloudSync })}
-          />
-          {account && prefs.cloudSync && (
-            <Setting
-              title="Keep games in my account"
-              desc="Upload the ROM files you open, privately, so they’re ready on any device you sign in to."
-              on={prefs.cloudRoms === "on"}
-              onChange={(on) => onPrefs({ cloudRoms: on ? "on" : "off" })}
-            />
-          )}
-          <label className="setting">
-            <span>
-              <strong>Screen size</strong>
-              <small>How much of the window the game screen fills.</small>
-            </span>
-            <ScreenSizeSlider prefs={prefs} onPrefs={onPrefs} />
-          </label>
-          <Setting
-            title="UI sounds"
-            desc="Soft clicks when you press buttons in menus. Never during play."
-            on={prefs.uiSounds}
-            onChange={(uiSounds) => onPrefs({ uiSounds })}
-          />
-          <Setting
-            title="Reduce motion"
-            desc="Keep screens still. Follows your system setting unless you turn this on."
-            on={prefs.reduceMotion}
-            onChange={(reduceMotion) => onPrefs({ reduceMotion })}
-          />
-          <Setting
-            title="Remember games"
-            desc="Keep opened games in this browser for one-click play."
-            on={prefs.rememberRom}
-            onChange={(rememberRom) => onPrefs({ rememberRom })}
-          />
-        </div>
-      </section>
 
       <p className="lock-line">
         <Icon name="lock" size={15} />{" "}

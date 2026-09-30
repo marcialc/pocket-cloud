@@ -3,7 +3,13 @@ import { PLATFORMS, buttonLabel, type Button, type PlatformId } from "../../shar
 import type { Emulator } from "../emulator/Emulator";
 import { dpadDirections, type Direction } from "./dpad";
 
-type Props = { emulator: Emulator | null; platform: PlatformId; haptics: boolean };
+type Props = {
+  emulator: Emulator | null;
+  platform: PlatformId;
+  haptics: boolean;
+  /** Put away while a game controller is being played with. */
+  hidden?: boolean;
+};
 
 function buzz(on: boolean) {
   if (on) navigator.vibrate?.(8);
@@ -14,7 +20,7 @@ function buzz(on: boolean) {
  * screens). Every control tracks its own pointer, so presses combine
  * (multi-touch): hold a direction and tap A at the same time.
  */
-export function TouchControls({ emulator, platform, haptics }: Props) {
+export function TouchControls({ emulator, platform, haptics, hidden = false }: Props) {
   const buttons = PLATFORMS[platform].buttons;
   const face = (["y", "x", "b", "a", "c"] as const).filter((b) => buttons.includes(b));
   const shoulders = (["l", "l2", "r2", "r"] as const).filter((b) => buttons.includes(b));
@@ -71,7 +77,7 @@ export function TouchControls({ emulator, platform, haptics }: Props) {
   const releaseDpad = () => setDirections(new Set());
 
   return (
-    <div ref={root} className={`touch-controls${shoulders.length ? " has-shoulders" : ""}`} onContextMenu={(e) => e.preventDefault()}>
+    <div ref={root} className={`touch-controls${shoulders.length ? " has-shoulders" : ""}${hidden ? " pad-hidden" : ""}`} onContextMenu={(e) => e.preventDefault()}>
       {shoulders.length > 0 && <div className="shoulder-buttons">{shoulders.map((b) => touchButton(b, `shoulder ${b}`))}</div>}
       <div
         className="dpad"
