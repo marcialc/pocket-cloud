@@ -99,6 +99,17 @@ export type ListRomsResponse = {
   removed: string[];
 };
 
+/** A cover image the player picked for a game, kept in the account (already shrunk to about 480px: tens of KiB). */
+export const MAX_COVER_BYTES = 512 * 1024;
+/** Covers one account can keep (one per game). */
+export const MAX_CLOUD_COVERS = 500;
+export const COVER_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+
+/** A cover image in the account: `version` names its content, so a device can tell when its copy is out of date. */
+export type CloudCoverMeta = { romHash: string; version: string };
+export type ListCoversResponse = { covers: CloudCoverMeta[] };
+export type PutCoverResponse = { cover: CloudCoverMeta };
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;

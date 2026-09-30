@@ -179,3 +179,57 @@ describe("cloud ROM library", () => {
     expect(await res.json()).toMatchObject({ error: "library_full" });
   });
 });
+
+describe("cover images", () => {
+  const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+  const HASH = "a".repeat(64);
+
+  function putCover(cookie: string, hash: string, data: Uint8Array, type = "image/jpeg") {
+    return SELF.fetch(`${API}/roms/${hash}/cover`, { method: "PUT", headers: { Cookie: cookie, "Content-Type": type }, body: data });
+  }
+  function listCovers(cookie: string) {
+    return SELF.fetch(`${API}/roms/covers`, { headers: { Cookie: cookie } });
+  }
+
+  it("needs an email session", async () => {
+    const res = await SELF.fetch(`${API}/roms/covers`, { headers: { Authorization: `Bearer ${crypto.randomUUID()}` } });
+    expect(res.status).toBe(403);
+  });
+
+  it("round-trips a cover, lists its version, replaces and deletes it", async () => {
+    const cookie = await signIn();
+    const put = await putCover(cookie, HASH, JPEG);
+    expect(put.status).toBe(200);
+    const { cover } = (await put.json()) as { cover: { romHash: string; version: string } };
+    expect(cover.romHash).toBe(HASH);
+    expect(await (await listCovers(cookie)).json()).toEqual({ covers: [cover] });
+
+    const got = await SELF.fetch(`${API}/roms/${HASH}/cover`, { headers: { Cookie: cookie } });
+    expect(got.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(JPEG);
+
+    const replaced = (await (await putCover(cookie, HASH, new Uint8Array([9, 9, 9]), "image/png")).json()) as { cover: { version: string } };
+    expect(replaced.cover.version).not.toBe(cover.version);
+
+    expect((await SELF.fetch(`${API}/roms/${HASH}/cover`, { method: "DELETE", headers: { Cookie: cookie } })).status).toBe(204);
+    expect(await (await listCovers(cookie)).json()).toEqual({ covers: [] });
+    expect((await SELF.fetch(`${API}/roms/${HASH}/cover`, { headers: { Cookie: cookie } })).status).toBe(404);
+  });
+
+  it("keeps each account's covers to itself", async () => {
+    const a = await signIn();
+    const b = await signIn();
+    await putCover(a, HASH, JPEG);
+    expect(await (await listCovers(b)).json()).toEqual({ covers: [] });
+    expect((await SELF.fetch(`${API}/roms/${HASH}/cover`, { headers: { Cookie: b } })).status).toBe(404);
+  });
+
+  it("takes only images of a sensible size, and doesn't list covers as games", async () => {
+    const cookie = await signIn();
+    expect((await putCover(cookie, HASH, JPEG, "text/html")).status).toBe(415);
+    expect((await putCover(cookie, HASH, new Uint8Array(512 * 1024 + 1))).status).toBe(413);
+    expect((await putCover(cookie, "nothex", JPEG)).status).toBe(400);
+    await putCover(cookie, HASH, JPEG);
+    expect(await (await listRoms(cookie)).json()).toMatchObject({ roms: [] });
+  });
+});

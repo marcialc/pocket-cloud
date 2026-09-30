@@ -2,10 +2,13 @@ import {
   base64ToBytes,
   bytesToBase64,
   type CloudSaveMeta,
+  type CloudCoverMeta,
   type CloudSaveResponse,
+  type ListCoversResponse,
   type ListRomsResponse,
   type ListSavesResponse,
   type PutSaveRequest,
+  type PutCoverResponse,
   type PutSaveResponse,
   type PutSettingsRequest,
   type RestoreSaveResponse,
@@ -160,6 +163,32 @@ export async function downloadCloudRom(romHash: string): Promise<ArrayBuffer | n
 
 export async function deleteCloudRom(romHash: string): Promise<void> {
   const res = await call(`/roms/${romHash}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw await romError(res);
+}
+
+/** Cover images kept in the signed-in account, with their versions. */
+export async function listCloudCovers(): Promise<CloudCoverMeta[]> {
+  const res = await call("/roms/covers");
+  if (!res.ok) throw await romError(res);
+  return ((await res.json()) as ListCoversResponse).covers;
+}
+
+export async function uploadCloudCover(romHash: string, data: ArrayBuffer, type: string): Promise<CloudCoverMeta> {
+  const res = await call(`/roms/${romHash}/cover`, { method: "PUT", body: data, headers: { "Content-Type": type } });
+  if (!res.ok) throw await romError(res);
+  return ((await res.json()) as PutCoverResponse).cover;
+}
+
+/** The image and its type, or null if the account doesn't have one for that game. */
+export async function downloadCloudCover(romHash: string): Promise<{ data: ArrayBuffer; type: string } | null> {
+  const res = await call(`/roms/${romHash}/cover`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw await romError(res);
+  return { data: await res.arrayBuffer(), type: res.headers.get("Content-Type") ?? "image/jpeg" };
+}
+
+export async function deleteCloudCover(romHash: string): Promise<void> {
+  const res = await call(`/roms/${romHash}/cover`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw await romError(res);
 }
 
