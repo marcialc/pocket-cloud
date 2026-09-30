@@ -1,6 +1,14 @@
 import type { AccountResponse, AuthErrorResponse } from "../../shared/auth";
 import { getPlayerKey } from "./identity";
 
+/** The last account the server confirmed, so a signed-in player stays signed in while offline. */
+const ACCOUNT_KEY = "pocket-cloud.account";
+
+function rememberAccount(email: string | null): void {
+  if (email) localStorage.setItem(ACCOUNT_KEY, email);
+  else localStorage.removeItem(ACCOUNT_KEY);
+}
+
 /** A sign-in request the server refused, with its error code. */
 export class AuthError extends Error {
   constructor(
@@ -41,21 +49,32 @@ export async function requestSignInCode(email: string): Promise<void> {
 /** Redeems the code; the server sets the session cookie. Returns the signed-in email. */
 export async function verifySignInCode(email: string, code: string): Promise<string> {
   const res = await post("/verify", { email, code }, true);
-  return ((await res.json()) as AccountResponse).email;
+  const account = ((await res.json()) as AccountResponse).email;
+  rememberAccount(account);
+  return account;
 }
 
-/** The signed-in email, or null when signed out (or the server can't be reached). */
+/**
+ * The signed-in email, or null when signed out. When the server can't be reached (offline, or
+ * down), the account it last confirmed: the player hasn't signed out, and their saves still sync
+ * once it's back.
+ */
 export async function fetchAccount(): Promise<string | null> {
+  let res: Response;
   try {
-    const res = await fetch("/api/auth/me", { signal: AbortSignal.timeout(5_000) });
-    return res.ok ? ((await res.json()) as AccountResponse).email : null;
+    res = await fetch("/api/auth/me", { signal: AbortSignal.timeout(5_000) });
   } catch {
-    return null;
+    return localStorage.getItem(ACCOUNT_KEY);
   }
+  if (res.status >= 500) return localStorage.getItem(ACCOUNT_KEY);
+  const email = res.ok ? ((await res.json()) as AccountResponse).email : null;
+  rememberAccount(email);
+  return email;
 }
 
 export async function signOut(everywhere: boolean): Promise<void> {
   await post("/logout", { everywhere });
+  rememberAccount(null);
 }
 
 export function authErrorMessage(err: unknown): string {
