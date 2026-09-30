@@ -3,7 +3,7 @@ import type { Emulator } from "../emulator/Emulator";
 import type { RomInfo } from "../emulator/rom";
 import { bytesToBase64 } from "../../shared/api";
 import { deleteLocalSave, getLocalSave, type LocalGameSave } from "./localSaves";
-import { SaveSync } from "./SaveSync";
+import { RestoreError, SaveSync } from "./SaveSync";
 
 const ROM: RomInfo = {
   platform: "gb", gameId: "POKEMON RED", title: "POKEMON RED", romHash: "e".repeat(64),
@@ -82,6 +82,62 @@ describe("SaveSync", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect((await getLocalSave(ROM.romHash))!.cloud?.revision).toBe(1);
     expect(sync.getStatus().state).toBe("synced");
+    sync.destroy();
+  });
+
+  it("keeps a picture with each save and uploads it", async () => {
+    const picture = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      expect(body.screenshot).toBe(bytesToBase64(picture));
+      return Response.json({ ok: true, save: { ...body, romHash: ROM.romHash, sramSize: 16, revision: 1, createdAt: 1, sram: undefined } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const emu = fakeEmulator();
+    const forSave = vi.fn(async () => picture.slice().buffer);
+    const sync = new SaveSync(emu, ROM, null, true, RTC_BASE, { forSave });
+    emu.gameWrites([7]);
+    await sync.flush();
+    expect(forSave).toHaveBeenCalledWith((await getLocalSave(ROM.romHash))!.updatedAt);
+    expect(new Uint8Array((await getLocalSave(ROM.romHash))!.screenshot!)).toEqual(picture);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    sync.destroy();
+  });
+
+  it("leaves the picture out of an upload as the page goes away when it would be too big to send", async () => {
+    const bodies: { screenshot?: string; keepalive: boolean }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        expect((init.body as string).length).toBeLessThanOrEqual(60 * 1024);
+        bodies.push({ ...(body.screenshot ? { screenshot: body.screenshot } : {}), keepalive: init.keepalive === true });
+        return Response.json({ ok: true, save: { ...body, romHash: ROM.romHash, sramSize: 16, revision: 1, createdAt: 1, sram: undefined } });
+      }),
+    );
+    const emu = fakeEmulator();
+    const sync = new SaveSync(emu, ROM, null, true, RTC_BASE, { forSave: async () => new Uint8Array(50 * 1024).buffer });
+    emu.gameWrites([7]);
+    await sync.flush(); // flush() uploads with keepalive, for page hide
+    expect(bodies).toEqual([{ keepalive: true }]);
+    sync.destroy();
+  });
+
+  it("uploads a save too big for keepalive whole when the page is staying", async () => {
+    const bodies: { screenshot: boolean; keepalive: boolean }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        bodies.push({ screenshot: !!body.screenshot, keepalive: init.keepalive === true });
+        return Response.json({ ok: true, save: { ...body, romHash: ROM.romHash, sramSize: 16, revision: 1, createdAt: 1, sram: undefined } });
+      }),
+    );
+    const emu = fakeEmulator();
+    const sync = new SaveSync(emu, ROM, null, true, RTC_BASE, { forSave: async () => new Uint8Array(50 * 1024).buffer });
+    emu.gameWrites([7]);
+    await sync.flush({ keepalive: false });
+    expect(bodies).toEqual([{ screenshot: true, keepalive: false }]);
     sync.destroy();
   });
 
@@ -221,5 +277,87 @@ describe("SaveSync", () => {
     expect(sync.getLocal()?.rtcBase).toBe(RTC_BASE);
     await vi.waitFor(async () => expect((await getLocalSave(ROM.romHash))?.rtcBase).toBe(RTC_BASE));
     sync.destroy();
+  });
+
+  describe("restore()", () => {
+    const OLD = new Uint8Array(16).fill(3);
+    /** A cloud with revision 2 current and the save from revision 1 to go back to. */
+    function fakeCloud({ uploads = true, loads = true, restores = true } = {}) {
+      const calls: string[] = [];
+      let restoredAt = 0;
+      const saveMeta = (revision: number, sramHash: string, updatedAt: number) => ({
+        gameId: ROM.gameId, romHash: ROM.romHash, sramHash, sramSize: 16, revision, createdAt: 1, updatedAt,
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit = {}) => {
+          const method = init.method ?? "GET";
+          calls.push(`${method} ${url.replace(`/api/saves/${ROM.romHash}`, "")}${init.keepalive ? " keepalive" : ""}`);
+          if (method === "PUT") {
+            if (!uploads) throw new TypeError("Failed to fetch");
+            const body = JSON.parse(init.body as string);
+            if (restoredAt) return Response.json({ ok: false, conflict: saveMeta(3, "restored", restoredAt) }, { status: 409 });
+            return Response.json({ ok: true, save: { ...saveMeta(2, body.sramHash, body.updatedAt), rtcBase: body.rtcBase } });
+          }
+          if (method === "POST") {
+            if (!restores) return Response.json({ error: "not_found" }, { status: 404 });
+            restoredAt = Date.now() + 1000;
+            return Response.json({ save: saveMeta(3, "restored", restoredAt) });
+          }
+          if (!loads) throw new TypeError("Failed to fetch");
+          return Response.json({ ...saveMeta(3, "restored", restoredAt), sram: bytesToBase64(OLD) });
+        }),
+      );
+      return calls;
+    }
+
+    async function playing() {
+      const emu = fakeEmulator();
+      const sync = new SaveSync(emu, ROM, null, true, RTC_BASE);
+      emu.gameWrites([7]); // the current save, not uploaded yet
+      return { emu, sync };
+    }
+
+    it("uploads the current save whole, switches the cloud and hands back the old save", async () => {
+      const calls = fakeCloud();
+      const { sync } = await playing();
+      expect(await sync.restore(1)).toEqual(OLD);
+      expect(calls).toEqual(["PUT ", "POST /history/1/restore", "GET "]);
+      expect((await getLocalSave(ROM.romHash))!.cloud).toMatchObject({ revision: 3, sramHash: "restored" });
+      expect(sync.getStatus().state).toBe("synced");
+      sync.destroy();
+    });
+
+    it("refuses when the current save can't reach the cloud, so it isn't lost", async () => {
+      const calls = fakeCloud({ uploads: false });
+      const { sync } = await playing();
+      await expect(sync.restore(1)).rejects.toThrow(new RestoreError("Your latest save hasn’t reached the cloud yet, so it couldn’t be kept. Check your connection and try again."));
+      expect(calls).toEqual(["PUT "]);
+      sync.destroy();
+    });
+
+    it("says so when the save isn't kept any more", async () => {
+      fakeCloud({ restores: false });
+      const { sync } = await playing();
+      await expect(sync.restore(1)).rejects.toThrow("That save isn’t kept any more.");
+      sync.destroy();
+    });
+
+    it("after a restore it couldn't load, keeps its save and meets the restored one as a conflict", async () => {
+      const calls = fakeCloud({ loads: false });
+      const { emu, sync } = await playing();
+      await expect(sync.restore(1, { retryDelayMs: 0 })).rejects.toThrow(/was restored, but this device couldn’t load it/);
+      expect(calls.filter((c) => c === "GET ")).toHaveLength(3);
+      // Nothing half-taken: the device still has its own save, synced at revision 2.
+      const local = (await getLocalSave(ROM.romHash))!;
+      expect(Array.from(new Uint8Array(local.sram)).slice(0, 1)).toEqual([7]);
+      expect(local.cloud?.revision).toBe(2);
+
+      // Its next save doesn't overwrite the restore: the player gets to choose.
+      emu.gameWrites([8]);
+      await sync.flush();
+      expect(sync.getStatus()).toMatchObject({ state: "conflict", cloud: { revision: 3 } });
+      sync.destroy();
+    });
   });
 });

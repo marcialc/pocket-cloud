@@ -30,6 +30,7 @@ import { decideLaunch } from "../saves/sync";
 import { formatWhen } from "./format";
 import { Brand, Icon, Ridges } from "./icons";
 import { Modal } from "./Modal";
+import { SaveGallery } from "./SaveGallery";
 import { Badge, type BadgeKind } from "./SyncBadge";
 
 type Props = {
@@ -94,6 +95,7 @@ export function RomPicker({
   const [dragging, setDragging] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<LibraryEntry | null>(null);
   const [editing, setEditing] = useState<LibraryEntry | null>(null);
+  const [history, setHistory] = useState<LibraryEntry | null>(null);
   const [storage, setStorage] = useState<{ usage: number; persisted: boolean } | null>(null);
   const [syncByRom, setSyncByRom] = useState<Record<string, GameSync>>({});
   const [query, setQuery] = useState("");
@@ -503,6 +505,18 @@ export function RomPicker({
                       >
                         <Icon name="folder" size={16} />
                       </button>
+                      {prefs.cloudSync && (
+                        <button
+                          type="button"
+                          className="ibtn small tip"
+                          data-tip="Previous saves"
+                          aria-label={`Previous saves of ${rom.title}`}
+                          aria-haspopup="dialog"
+                          onClick={() => setHistory(rom)}
+                        >
+                          <Icon name="clock" size={16} />
+                        </button>
+                      )}
                       {rom.onDevice && (
                         <button
                           type="button"
@@ -596,6 +610,10 @@ export function RomPicker({
           onCancel={() => setEditing(null)}
           onSave={(edit) => void saveEdit(editing, edit)}
         />
+      )}
+
+      {history && (
+        <SaveGallery romHash={history.romHash} title={history.title} cloudSync={prefs.cloudSync} onClose={() => setHistory(null)} />
       )}
 
       {grouping && (

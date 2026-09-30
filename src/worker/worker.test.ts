@@ -151,3 +151,123 @@ describe("PlayerSaveDO", () => {
     expect(save!.createdAt).toBeGreaterThan(0);
   });
 });
+
+describe("save history", () => {
+  const auth = (key: string) => ({ Authorization: `Bearer ${key}` });
+  const history = (key: string) => SELF.fetch(`${API}/saves/${ROM_HASH}/history`, { headers: auth(key) });
+
+  /** Uploads saves [1], [2], ... [n] in turn. */
+  async function saveTimes(key: string, n: number) {
+    for (let i = 1; i <= n; i++) {
+      expect((await put(key, await putBody(new Uint8Array([i]), { baseRevision: i === 1 ? null : i - 1, updatedAt: i }))).status).toBe(200);
+    }
+  }
+
+  it("keeps the last 4 replaced saves, newest first", async () => {
+    const key = playerKey();
+    await saveTimes(key, 7);
+    const { versions } = await (await history(key)).json<{ versions: { revision: number; sramHash: string }[] }>();
+    expect(versions.map((v) => v.revision)).toEqual([6, 5, 4, 3]);
+    expect(versions[0]!.sramHash).toBe(await sha256Hex(new Uint8Array([6])));
+
+    const old = await (await SELF.fetch(`${API}/saves/${ROM_HASH}/history/4`, { headers: auth(key) })).json<CloudSaveResponse>();
+    expect(old).toMatchObject({ revision: 4, updatedAt: 4 });
+    expect(old.sram).toBe(bytesToBase64(new Uint8Array([4])));
+    expect((await SELF.fetch(`${API}/saves/${ROM_HASH}/history/1`, { headers: auth(key) })).status).toBe(404);
+  });
+
+  it("doesn't file a retried upload of the same bytes", async () => {
+    const key = playerKey();
+    await saveTimes(key, 2);
+    await put(key, await putBody(new Uint8Array([2]), { baseRevision: 2, updatedAt: 2 }));
+    const { versions } = await (await history(key)).json<{ versions: unknown[] }>();
+    expect(versions).toHaveLength(1);
+  });
+
+  it("restores an earlier save as a new revision and keeps the one it replaced", async () => {
+    const key = playerKey();
+    await saveTimes(key, 3);
+    const before = Date.now();
+    const res = await SELF.fetch(`${API}/saves/${ROM_HASH}/history/1/restore`, { method: "POST", headers: auth(key) });
+    expect(res.status).toBe(200);
+    const { save } = await res.json<{ save: { revision: number; updatedAt: number } }>();
+    expect(save.revision).toBe(4);
+    // Dated now, so other devices take it as the newest save.
+    expect(save.updatedAt).toBeGreaterThanOrEqual(before);
+
+    const current = await (await get(key)).json<CloudSaveResponse>();
+    expect(current.sram).toBe(bytesToBase64(new Uint8Array([1])));
+    const { versions } = await (await history(key)).json<{ versions: { revision: number }[] }>();
+    expect(versions.map((v) => v.revision)).toEqual([3, 2]);
+
+    expect((await SELF.fetch(`${API}/saves/${ROM_HASH}/history/1/restore`, { method: "POST", headers: auth(key) })).status).toBe(404);
+  });
+
+  it("deletes the earlier saves with the save", async () => {
+    const key = playerKey();
+    await saveTimes(key, 3);
+    expect((await SELF.fetch(`${API}/saves/${ROM_HASH}`, { method: "DELETE", headers: auth(key) })).status).toBe(204);
+    expect(await (await history(key)).json()).toEqual({ current: null, versions: [] });
+  });
+
+  it("keeps each player's history to that player", async () => {
+    const key = playerKey();
+    await saveTimes(key, 2);
+    expect(await (await history(playerKey())).json()).toEqual({ current: null, versions: [] });
+    expect((await SELF.fetch(`${API}/saves/${ROM_HASH}/history/1`, { headers: auth(playerKey()) })).status).toBe(404);
+  });
+});
+
+describe("save screenshots", () => {
+  const auth = (key: string) => ({ Authorization: `Bearer ${key}` });
+  const png = (n: number) => bytesToBase64(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n]));
+  const history = async (key: string) =>
+    (await SELF.fetch(`${API}/saves/${ROM_HASH}/history`, { headers: auth(key) })).json<{
+      current: { revision: number; screenshot?: string; hasScreenshot?: true } | null;
+      versions: { revision: number; screenshot?: string }[];
+    }>();
+
+  it("keeps each save's picture with it, into the history and back on restore", async () => {
+    const key = playerKey();
+    await put(key, await putBody(new Uint8Array([1]), { screenshot: png(1) }));
+    await put(key, await putBody(new Uint8Array([2]), { baseRevision: 1, screenshot: png(2) }));
+    let h = await history(key);
+    expect(h.current).toMatchObject({ revision: 2, screenshot: png(2), hasScreenshot: true });
+    expect(h.versions).toMatchObject([{ revision: 1, screenshot: png(1) }]);
+
+    await SELF.fetch(`${API}/saves/${ROM_HASH}/history/1/restore`, { method: "POST", headers: auth(key) });
+    h = await history(key);
+    expect(h.current).toMatchObject({ revision: 3, screenshot: png(1) });
+    expect(h.versions).toMatchObject([{ revision: 2, screenshot: png(2) }]);
+  });
+
+  it("stores the save without a picture that isn't a PNG or is too big", async () => {
+    const key = playerKey();
+    const notPng = bytesToBase64(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    expect((await put(key, await putBody(new Uint8Array([1]), { screenshot: notPng }))).status).toBe(200);
+    expect((await history(key)).current).not.toHaveProperty("screenshot");
+    const huge = bytesToBase64(new Uint8Array(97 * 1024).fill(0x89));
+    expect((await put(key, await putBody(new Uint8Array([2]), { baseRevision: 1, screenshot: huge }))).status).toBe(200);
+    expect((await history(key)).current).toMatchObject({ revision: 2 });
+    expect((await history(key)).current).not.toHaveProperty("screenshot");
+  });
+
+  it("lists saves with their size and whether they have a picture", async () => {
+    const key = playerKey();
+    await put(key, await putBody(new Uint8Array(300), { screenshot: png(1) }));
+    await put(key, await putBody(new Uint8Array(200), { screenshot: undefined }), "c".repeat(64));
+    const { saves } = await (await SELF.fetch(`${API}/saves`, { headers: auth(key) })).json<{
+      saves: { romHash: string; sramSize: number; hasScreenshot?: true }[];
+    }>();
+    expect(saves.find((s) => s.romHash === ROM_HASH)).toMatchObject({ sramSize: 300, hasScreenshot: true });
+    expect(saves.find((s) => s.romHash === "c".repeat(64))).toMatchObject({ sramSize: 200 });
+    expect(saves.find((s) => s.romHash === "c".repeat(64))).not.toHaveProperty("hasScreenshot");
+  });
+
+  it("drops the picture when a save without one replaces it", async () => {
+    const key = playerKey();
+    await put(key, await putBody(new Uint8Array([1]), { screenshot: png(1) }));
+    await put(key, await putBody(new Uint8Array([2]), { baseRevision: 1 }));
+    expect((await history(key)).current).not.toHaveProperty("screenshot");
+  });
+});

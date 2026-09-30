@@ -63,6 +63,14 @@ export interface Emulator {
    * real time at the next reset().
    */
   loadState?(data: Uint8Array): void;
+  /**
+   * The picture on screen now, as a PNG at the console's own resolution; null
+   * when there's no frame to take (not started; for some cores also paused or
+   * in a hidden tab). Callers wanting only live frames check `running` first.
+   */
+  screenshot?(): Promise<Blob | null>;
+  /** How often screenshot() may be called while playing, for cores where it costs more (see saveShots.ts). */
+  readonly screenshotEveryMs?: number;
   /** Deliver any pending onSramWrite notification now (e.g. before the page unloads). */
   flushSramWrites(): void;
 

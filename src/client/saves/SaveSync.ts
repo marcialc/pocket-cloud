@@ -1,7 +1,7 @@
-import { sha256Hex, type CloudSaveMeta } from "../../shared/api";
+import { bytesToBase64, sha256Hex, type CloudSaveMeta } from "../../shared/api";
 import type { Emulator } from "../emulator/Emulator";
 import type { RomInfo } from "../emulator/rom";
-import { CloudUnavailableError, fetchCloudSave, pushCloudSave, type CloudSave } from "./cloudApi";
+import { CloudUnavailableError, fetchCloudSave, pushCloudSave, restoreCloudSaveVersion, type CloudSave } from "./cloudApi";
 import { putLocalSave, type LocalGameSave } from "./localSaves";
 import { decideLaunch, hasUnsyncedChanges, matchCloud, nextPushDelay, resolvePushConflict, retryDelay, type LaunchDecision } from "./sync";
 
@@ -59,6 +59,9 @@ export function localFromCloud(cloud: CloudSave): LocalGameSave {
   };
 }
 
+/** Going back to a previous save didn't happen (or only half did); the message is for the player. */
+export class RestoreError extends Error {}
+
 export class SaveSync {
   private local: LocalGameSave | null;
   private status: SyncStatus;
@@ -81,6 +84,8 @@ export class SaveSync {
     private cloudEnabled: boolean,
     /** The cartridge clock base the emulator was started with (see emulator/rtc.ts). */
     private rtcBase: number,
+    /** Where each save's picture comes from (see saveShots.ts). */
+    private readonly shots: { forSave(savedAt: number): Promise<ArrayBuffer | null> } | null = null,
   ) {
     this.local = initial;
     if (initial && initial.rtcBase !== this.rtcBase) {
@@ -143,8 +148,13 @@ export class SaveSync {
     this.schedulePush(0);
   }
 
-  /** Persist immediately and try a best-effort upload (page hide / unload). */
-  async flush(): Promise<void> {
+  /**
+   * Persist immediately and try a best-effort upload (page hide / unload).
+   * `keepalive: false` when the page is staying: the upload then isn't held to
+   * the browser's 64 KiB limit for requests that outlive the page, so a big save
+   * (and its picture) goes up whole.
+   */
+  async flush({ keepalive = true }: { keepalive?: boolean } = {}): Promise<void> {
     // Only real writes by the game trigger a capture (via onSramWrite); never
     // snapshot SRAM speculatively, or a freshly booted game could produce a
     // blank "save" that competes with a real one.
@@ -155,10 +165,10 @@ export class SaveSync {
       // Joining an upload under way: one owed after it (the player's keepLocal) only gets scheduled,
       // and a teardown right after flush() would drop it. Run it now instead.
       const joining = this.pushing !== null;
-      await this.push({ keepalive: true });
+      await this.push({ keepalive });
       if (joining && this.pushTimer) {
         this.clearTimer();
-        await this.push({ keepalive: true });
+        await this.push({ keepalive });
       }
     }
   }
@@ -179,6 +189,44 @@ export class SaveSync {
     await putLocalSave(this.local);
     this.setStatus({ state: "synced", at: Date.now() });
     return cloud.sram;
+  }
+
+  /**
+   * Go back to a previous cloud save (by its revision) while playing. The current save is
+   * uploaded first, so the cloud keeps it with the others; then the cloud switches to the one
+   * picked and this device takes it. Returns its SRAM, for the caller to reboot with.
+   *
+   * Throws RestoreError. When the cloud switched but this device couldn't load the save, the
+   * device keeps its old one: its next upload meets the restored save as a conflict, where the
+   * player can take it, and reopening the game loads it.
+   */
+  async restore(revision: number, { attempts = 3, retryDelayMs = 1000 } = {}): Promise<Uint8Array> {
+    // Not keepalive: the page stays, and a big save must go up whole.
+    await this.flush({ keepalive: false });
+    if (this.local && hasUnsyncedChanges(this.local)) {
+      throw new RestoreError("Your latest save hasn’t reached the cloud yet, so it couldn’t be kept. Check your connection and try again.");
+    }
+    let restored: CloudSaveMeta | null;
+    try {
+      restored = await restoreCloudSaveVersion(this.rom.romHash, revision);
+    } catch (err) {
+      if (!(err instanceof CloudUnavailableError)) throw err;
+      throw new RestoreError("Couldn’t reach the cloud. Check your connection and try again.");
+    }
+    if (!restored) throw new RestoreError("That save isn’t kept any more.");
+    // The cloud has switched already: from here on, failing to load it only means doing so later.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const sram = await this.takeCloud();
+        if (sram) return sram;
+      } catch (err) {
+        console.warn("Could not load the restored save", err);
+      }
+      if (attempt >= attempts) {
+        throw new RestoreError("The save was restored, but this device couldn’t load it. Close the game and open it again to carry on from it.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+    }
   }
 
   destroy(): void {
@@ -202,14 +250,20 @@ export class SaveSync {
     const sramHash = await sha256Hex(sram);
     if (sramHash === this.local?.sramHash) return; // RAM-enable toggles etc. without real changes.
     this.bankPlayTime();
+    const updatedAt = Date.now();
+    const screenshot = await this.shots?.forSave(updatedAt).catch((err: unknown) => {
+      console.warn("Could not keep a picture with the save", err);
+      return null;
+    });
     this.local = {
       gameId: this.rom.gameId,
       romHash: this.rom.romHash,
       sram: sram.slice().buffer,
       sramHash,
-      updatedAt: Date.now(),
+      updatedAt,
       playTime: this.local?.playTime ?? 0,
       rtcBase: this.rtcBase,
+      ...(screenshot ? { screenshot } : {}),
       cloud: this.local?.cloud ?? null,
     };
     await putLocalSave(this.local);
@@ -283,6 +337,7 @@ export class SaveSync {
           updatedAt: local.updatedAt,
           playTime: Math.round(local.playTime),
           ...(local.rtcBase !== undefined ? { rtcBase: local.rtcBase } : {}),
+          ...(local.screenshot ? { screenshot: bytesToBase64(new Uint8Array(local.screenshot)) } : {}),
           baseRevision: local.cloud?.revision ?? null,
           ...(force ? { force: true } : {}),
         },

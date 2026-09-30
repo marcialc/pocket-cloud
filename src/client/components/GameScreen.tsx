@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
+import type { SaveVersion } from "../../shared/api";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
@@ -17,6 +18,7 @@ import { resetPlayerKey } from "../saves/identity";
 import { reportScore } from "../saves/socialApi";
 import { clearCloudSyncState } from "../saves/localSaves";
 import { resumeKeeper, resumeStateFor, sramHashOf } from "../saves/resumeStates";
+import { ScreenKeeper } from "../saves/saveShots";
 import { SaveSync, type SyncStatus } from "../saves/SaveSync";
 import { CloudPanel } from "./CloudPanel";
 import { ConflictPause } from "./conflictPause";
@@ -26,6 +28,7 @@ import { Modal } from "./Modal";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
+import { SaveGallery } from "./SaveGallery";
 import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { describeStatus, SyncBadge } from "./SyncBadge";
 import { TouchControls } from "./TouchControls";
@@ -59,6 +62,9 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [openElsewhere, setOpenElsewhere] = useState(false);
   const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
   const [menu, setMenu] = useState(false);
+  const [gallery, setGallery] = useState(false);
+  /** Frames kept for the pictures shown with saves. */
+  const shots = useRef<ScreenKeeper | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [scale, setScale] = useState(3);
   const [dim, setDim] = useState(false);
@@ -78,6 +84,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     let saveSync: SaveSync | null = null;
     let lock: GameLock | null = null;
     let remember: (() => Promise<void>) | null = null;
+    const keeper = new ScreenKeeper(emu);
+    shots.current = keeper;
 
     (async () => {
       // One tab per game, or each tab's saves overwrite the other's.
@@ -116,12 +124,13 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         }
       }
       remember = resumeKeeper(emu, session.rom.romHash);
-      saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase);
+      saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase, keeper);
       saveSync.subscribe(setStatus);
       setStatus(saveSync.getStatus());
       if (session.push) saveSync.requestPush(session.push.force);
       emu.onError?.((err) => !disposed && setError(err.message));
       emu.start();
+      keeper.start();
       saveSync.setPlaying(true);
       setEmulator(emu);
       setSync(saveSync);
@@ -135,6 +144,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     return () => {
       disposed = true;
       unmounted.abort();
+      keeper.stop();
       // Where the game was left. RetroArch only writes a snapshot while it runs, so the game is
       // silenced at once but paused only once that's taken.
       const leaving = remember?.().catch((err: unknown) => console.warn("Could not remember where the game was left", err));
@@ -310,6 +320,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     setConfirmReset(false);
     setMenu(false);
     emulator?.reset();
+    shots.current?.clear();
     if (paused) setRunning(true);
     setFlash("RESET");
     setAnnounce("Game reset");
@@ -344,6 +355,37 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       emulator.loadSram(sram);
       emulator.setClock?.(sync.getRtcBase());
       emulator.reset();
+      shots.current?.clear();
+    }
+  };
+
+  /** Why going back to a previous save can't happen right now, if it can't. */
+  const restoreBlocked =
+    status.state === "conflict"
+      ? "Choose between the two saves first."
+      : status.state === "offline"
+        ? "Can’t reach the cloud right now. Previous saves can be restored once it’s back."
+        : null;
+
+  /**
+   * Go back to a previous save: the current one is uploaded first (so it's kept with
+   * the others), the cloud switches to the one picked, and the game restarts from it.
+   */
+  const restoreSave = async (version: SaveVersion) => {
+    if (!sync || !emulator) throw new Error("The game hasn’t started yet.");
+    const wasRunning = emulator.running;
+    setRunning(false);
+    try {
+      const sram = await sync.restore(version.revision);
+      emulator.loadSram(sram);
+      emulator.setClock?.(sync.getRtcBase());
+      emulator.reset();
+      shots.current?.clear();
+      setFlash("RESTORED");
+      setAnnounce("Previous save restored");
+      setTimeout(() => setFlash(null), 900);
+    } finally {
+      if (wasRunning) setRunning(true);
     }
   };
 
@@ -359,7 +401,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   const localSave = sync?.getLocal() ?? session.save;
   const muted = prefs.muted || prefs.volume === 0;
-  const overlayOpen = panel !== null || menu || confirmReset;
+  const overlayOpen = panel !== null || menu || confirmReset || gallery;
 
   const tools: { icon: IconName; label: string; onClick: () => void; pressed?: boolean; disabled?: boolean }[] = [
     { icon: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", onClick: togglePause, disabled: !emulator },
@@ -469,6 +511,17 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               <Icon name="fullscreen" />
             </button>
           )}
+          <button
+            type="button"
+            className="ibtn tip"
+            data-tip="Previous saves"
+            aria-label="Previous saves"
+            aria-haspopup="dialog"
+            disabled={!sync}
+            onClick={() => setGallery(true)}
+          >
+            <Icon name="clock" />
+          </button>
           <button type="button" className="ibtn tip" data-tip="Controls" aria-label="Controls" onClick={() => setPanel("controls")}>
             <Icon name="gamepad" size={22} />
           </button>
@@ -533,6 +586,14 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                       <Icon name="fullscreen" size={22} /> Fullscreen
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="tile"
+                    disabled={!sync}
+                    onClick={() => (setMenu(false), setGallery(true))}
+                  >
+                    <Icon name="clock" size={22} /> Previous saves
+                  </button>
                   <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("controls"))}>
                     <Icon name="gamepad" size={24} /> Controls
                   </button>
@@ -598,8 +659,19 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
             await sync?.flush();
             sync?.destroy();
           }}
-          current={{ romHash: session.rom.romHash, status, onDownload: downloadSave }}
+          current={{ romHash: session.rom.romHash, status, onDownload: downloadSave, onRestore: restoreSave, restoreBlocked }}
           onClose={() => setPanel(null)}
+        />
+      )}
+
+      {gallery && (
+        <SaveGallery
+          romHash={session.rom.romHash}
+          title={title}
+          cloudSync={prefs.cloudSync}
+          onRestore={restoreSave}
+          restoreBlocked={restoreBlocked}
+          onClose={() => setGallery(false)}
         />
       )}
 

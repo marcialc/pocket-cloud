@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CloudSaveMeta } from "../../shared/api";
+import type { CloudSaveMeta, SaveVersion } from "../../shared/api";
 import { gameName } from "../../shared/shelf";
 import type { Preferences } from "../preferences";
 import { authErrorMessage, fetchAccount } from "../saves/authApi";
@@ -10,6 +10,7 @@ import type { SyncStatus } from "../saves/SaveSync";
 import { backupName, downloadBytes } from "./download";
 import { formatWhen } from "./format";
 import { Icon } from "./icons";
+import { SaveGallery } from "./SaveGallery";
 import { ScreenSizeSlider } from "./ScreenSizeSlider";
 import { SidePanel } from "./SidePanel";
 import { SignInForm } from "./SignInForm";
@@ -23,8 +24,19 @@ type Props = {
   onSignOut: (everywhere: boolean) => Promise<void>;
   /** Persist and stop syncing the current game before the player key changes. */
   onBeforeRestore?: () => Promise<void>;
-  /** In-game: the running game's live status, and its save can't be deleted while it runs. */
-  current?: { romHash: string; status: SyncStatus; onDownload: () => void } | undefined;
+  /**
+   * In-game: the running game's live status, and its save can't be deleted while it runs.
+   * Going back to one of its previous saves restarts it with that save (`onRestore`).
+   */
+  current?:
+    | {
+        romHash: string;
+        status: SyncStatus;
+        onDownload: () => void;
+        onRestore: (version: SaveVersion) => Promise<void>;
+        restoreBlocked: string | null;
+      }
+    | undefined;
   onClose: () => void;
 };
 
@@ -37,6 +49,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
   const [cloud, setCloud] = useState<CloudList>({ state: "loading" });
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
 
   useEffect(() => {
@@ -61,6 +74,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
   }, [prefs.cloudSync]);
   useEffect(refresh, [refresh]);
 
+  const historySave = cloud.state === "ready" ? cloud.saves.find((s) => s.romHash === historyOf) : undefined;
   const nameOf = (s: CloudSaveMeta) => gameName(prefs.shelf, s.romHash) ?? titles[s.romHash] ?? s.gameId;
 
   const download = async (s: CloudSaveMeta) => {
@@ -147,6 +161,16 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
                           <button
                             type="button"
                             className="ibtn small tip"
+                            data-tip="Previous saves"
+                            aria-label={`Previous saves of ${nameOf(s)}`}
+                            aria-haspopup="dialog"
+                            onClick={() => setHistoryOf(s.romHash)}
+                          >
+                            <Icon name="clock" size={17} />
+                          </button>
+                          <button
+                            type="button"
+                            className="ibtn small tip"
                             data-tip="Download backup"
                             aria-label={`Download backup of ${nameOf(s)}`}
                             onClick={() => (playing ? current!.onDownload() : void download(s))}
@@ -172,7 +196,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
                     {confirming && (
                       <div className="confirm-inline enter" role="alertdialog" aria-labelledby={`del-${s.romHash}`}>
                         <p id={`del-${s.romHash}`}>
-                          Delete the cloud save for <strong>{nameOf(s)}</strong>? A copy saved in this browser stays, and backs
+                          Delete the cloud save for <strong>{nameOf(s)}</strong> and its earlier versions? A copy saved in this browser stays, and backs
                           up again the next time you play it here. Download a backup first if you might want it.
                         </p>
                         <div className="row end">
@@ -266,6 +290,19 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
+      {historySave && (
+        <SaveGallery
+          romHash={historySave.romHash}
+          title={nameOf(historySave)}
+          cloudSync={prefs.cloudSync}
+          onRestore={current?.romHash === historyOf ? current.onRestore : undefined}
+          restoreBlocked={current?.romHash === historyOf ? current.restoreBlocked : null}
+          onClose={() => {
+            setHistoryOf(null);
+            refresh();
+          }}
+        />
+      )}
     </SidePanel>
   );
 }

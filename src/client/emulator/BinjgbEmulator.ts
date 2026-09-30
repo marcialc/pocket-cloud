@@ -140,6 +140,12 @@ export class BinjgbEmulator implements Emulator {
     this.setButton(button, false);
   }
 
+  screenshot(): Promise<Blob | null> {
+    if (!this.coreStarted || this.destroyed) return Promise.resolve(null);
+    // The canvas is the LCD at 1:1 (it's scaled with CSS), so this is the frame as the game drew it.
+    return new Promise((resolve) => this.options.canvas.toBlob(resolve, "image/png"));
+  }
+
   getSram(): Uint8Array | null {
     const m = this.module;
     if (!m || !this.e) return null;

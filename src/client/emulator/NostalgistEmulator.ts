@@ -37,6 +37,9 @@ const ROM_BASE_NAME = "game";
 const SRAM_POLL_INTERVAL_MS = 1000;
 /** RetroArch writes a snapshot a few frames after asking; a hidden tab's core may never get to it. */
 const SAVE_STATE_TIMEOUT_MS = 5000;
+const SCREENSHOT_TIMEOUT_MS = 3000;
+/** Where RetroArch writes screenshots in its in-memory file system (Nostalgist's EmulatorFileSystem). */
+const SCREENSHOTS_DIR = "/home/web_user/retroarch/userdata/screenshots";
 const MUTED_DB = -80;
 const GESTURES = ["pointerdown", "keydown", "touchend"] as const;
 
@@ -221,6 +224,20 @@ export class NostalgistEmulator implements Emulator {
     return new Uint8Array(await state.arrayBuffer());
   }
 
+  /** Each one is a PNG encoded by RetroArch and read back from its file system: take fewer than binjgb. */
+  readonly screenshotEveryMs = 5000;
+
+  async screenshot(): Promise<Blob | null> {
+    const core = this.liveCore();
+    // Like saveState: RetroArch only writes it from its frame loop.
+    if (!core || !this.wantRunning || document.hidden) return null;
+    try {
+      return await withTimeout(core.screenshot(), SCREENSHOT_TIMEOUT_MS, "Taking a screenshot timed out.");
+    } finally {
+      this.clearScreenshots(core);
+    }
+  }
+
   /** Applied once RetroArch runs the game (start() launches it asynchronously). */
   loadState(data: Uint8Array): void {
     if (!this.rom) throw new Error("No ROM loaded.");
@@ -298,6 +315,10 @@ export class NostalgistEmulator implements Emulator {
         input_autodetect_enable: false,
         savestate_auto_load: false,
         savestate_thumbnail_enable: false,
+        // Screenshots of the game's own frame (not the scaled canvas), taken without a message or flash on screen.
+        video_gpu_screenshot: false,
+        notification_show_screenshot: false,
+        notification_show_screenshot_flash: 0,
         // Crisp pixels; RetroArch sizes its framebuffer to the canvas in device pixels.
         video_smooth: false,
         audio_volume: this.volumeDb(),
@@ -393,6 +414,22 @@ export class NostalgistEmulator implements Emulator {
     closeAudio(this.audioContexts);
     this.audioContexts.clear();
     this.disarmAudioUnlock();
+  }
+
+  /**
+   * Nostalgist finds RetroArch's screenshot by guessing its name from the current second, and
+   * deletes only that file. When the second rolls over before RetroArch writes it, the file is
+   * never found and stays in memory; clear out whatever is left after every screenshot.
+   */
+  private clearScreenshots(core: Nostalgist): void {
+    try {
+      const fs = core.getEmscriptenFS() as { readdir(path: string): string[]; unlink(path: string): void };
+      for (const name of fs.readdir(SCREENSHOTS_DIR)) {
+        if (name.endsWith(".png")) fs.unlink(`${SCREENSHOTS_DIR}/${name}`);
+      }
+    } catch {
+      // No screenshots directory yet, or the core has exited: nothing to clear.
+    }
   }
 
   /** Nostalgist once RetroArch runs the game; null before, while (re)launching and after exit. */

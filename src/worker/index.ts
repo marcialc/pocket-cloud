@@ -1,23 +1,28 @@
 import {
   HASH_PATTERN,
+  MAX_SCREENSHOT_BYTES,
   MAX_SRAM_BYTES,
   base64ToBytes,
   bytesToBase64,
   isKeyBindings,
   isPlatformKeyBindings,
+  isPng,
   sha256Hex,
   type CloudSaveResponse,
   type ListSavesResponse,
   type PutSaveRequest,
   type PutSaveResponse,
   type PutSettingsRequest,
+  type RestoreSaveResponse,
+  type SaveHistoryResponse,
+  type SaveVersion,
   type SettingsResponse,
 } from "../shared/api";
 import { isShelf } from "../shared/shelf";
 import { handleAuth } from "./auth/routes";
 import { handleCovers } from "./covers";
 import { clearSessionCookie } from "./auth/session";
-import type { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
+import type { PlayerSaveDO, StoredVersion } from "./durable-objects/PlayerSaveDO";
 import { isCrossSite, json, methodNotAllowed, readLimited } from "./http";
 import { authenticate } from "./identity";
 import { handleRoms } from "./roms";
@@ -34,7 +39,10 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   GET    /api/saves              list save metadata for this player
  *   GET    /api/saves/:romHash     fetch one save (with SRAM)
  *   PUT    /api/saves/:romHash     upload SRAM (optimistic concurrency via baseRevision)
- *   DELETE /api/saves/:romHash     delete one save
+ *   DELETE /api/saves/:romHash     delete one save (and its earlier versions)
+ *   GET    /api/saves/:romHash/history                    current save and earlier versions (with pictures)
+ *   GET    /api/saves/:romHash/history/:revision          fetch one earlier version (with SRAM)
+ *   POST   /api/saves/:romHash/history/:revision/restore  make an earlier version the current save
  *   /api/roms/*                    cloud ROM library (email sign-in only), see roms.ts
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
@@ -108,6 +116,9 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     return json({ saves: await stub.listSaves() } satisfies ListSavesResponse);
   }
 
+  const history = /^\/api\/saves\/([^/]+)\/history(?:\/(\d{1,15})(\/restore)?)?$/.exec(path);
+  if (history) return handleHistory(request, stub, history[1]!, history[2], history[3] !== undefined);
+
   const match = /^\/api\/saves\/([^/]+)$/.exec(path);
   const romHash = match?.[1];
   if (!romHash || !HASH_PATTERN.test(romHash)) return json({ error: "invalid_rom_hash" }, 400);
@@ -122,7 +133,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     case "PUT": {
       const parsed = await parsePut(request);
       if ("error" in parsed) return json({ error: parsed.error }, 400);
-      const { body, sram } = parsed;
+      const { body, sram, screenshot } = parsed;
       const result = await stub.putSave({
         romHash,
         gameId: body.gameId,
@@ -133,6 +144,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
         ...(body.playTime !== undefined ? { playTime: body.playTime } : {}),
         ...(body.rtcBase !== undefined ? { rtcBase: body.rtcBase } : {}),
         ...(body.force ? { force: true } : {}),
+        ...(screenshot ? { screenshot } : {}),
       });
       // Leaderboards are best effort: the save answers without waiting on the shared SocialDO.
       if (result.ok && identity.access.kind === "session") {
@@ -154,6 +166,36 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     default:
       return methodNotAllowed();
   }
+}
+
+async function handleHistory(
+  request: Request,
+  stub: DurableObjectStub<PlayerSaveDO>,
+  romHash: string,
+  revisionParam: string | undefined,
+  restore: boolean,
+): Promise<Response> {
+  if (!HASH_PATTERN.test(romHash)) return json({ error: "invalid_rom_hash" }, 400);
+  if (revisionParam === undefined) {
+    if (request.method !== "GET") return methodNotAllowed();
+    const { current, versions } = await stub.listHistory(romHash);
+    return json({ current: current && toWireVersion(current), versions: versions.map(toWireVersion) } satisfies SaveHistoryResponse);
+  }
+  const revision = Number(revisionParam);
+  if (restore) {
+    if (request.method !== "POST") return methodNotAllowed();
+    const save = await stub.restoreSave(romHash, revision);
+    return save ? json({ save } satisfies RestoreSaveResponse) : json({ error: "not_found" }, 404);
+  }
+  if (request.method !== "GET") return methodNotAllowed();
+  const version = await stub.getHistorySave(romHash, revision);
+  if (!version) return json({ error: "not_found" }, 404);
+  const { sram, ...meta } = version;
+  return json({ ...meta, sram: bytesToBase64(sram) } satisfies CloudSaveResponse);
+}
+
+function toWireVersion({ screenshot, ...meta }: StoredVersion): SaveVersion {
+  return { ...meta, ...(screenshot ? { screenshot: bytesToBase64(screenshot) } : {}) };
 }
 
 const KEY_BINDINGS = "key_bindings";
@@ -206,10 +248,10 @@ async function handleSettings(request: Request, stub: DurableObjectStub<PlayerSa
 
 async function parsePut(
   request: Request,
-): Promise<{ body: PutSaveRequest; sram: Uint8Array } | { error: string }> {
-  // base64 of the largest SRAM plus JSON overhead.
+): Promise<{ body: PutSaveRequest; sram: Uint8Array; screenshot?: Uint8Array } | { error: string }> {
+  // base64 of the largest SRAM and screenshot plus JSON overhead.
   const declared = Number(request.headers.get("Content-Length") ?? 0);
-  if (declared > MAX_SRAM_BYTES * 2) return { error: "payload_too_large" };
+  if (declared > (MAX_SRAM_BYTES + MAX_SCREENSHOT_BYTES) * 2) return { error: "payload_too_large" };
 
   let body: PutSaveRequest;
   try {
@@ -241,5 +283,20 @@ async function parsePut(
   }
   if (sram.length === 0 || sram.length > MAX_SRAM_BYTES) return { error: "invalid_sram_size" };
   if ((await sha256Hex(sram)) !== body.sramHash) return { error: "sram_hash_mismatch" };
-  return { body, sram };
+  return { body, sram, ...parseScreenshot(body.screenshot) };
+}
+
+/**
+ * The save's picture. It's only for the gallery, so one that's missing, too big
+ * or not a PNG is dropped and the save stored without it (refusing the save would
+ * leave the client retrying it forever).
+ */
+function parseScreenshot(value: unknown): { screenshot?: Uint8Array } {
+  if (typeof value !== "string" || value.length > Math.ceil(MAX_SCREENSHOT_BYTES / 3) * 4) return {};
+  try {
+    const screenshot = base64ToBytes(value);
+    return isPng(screenshot) ? { screenshot } : {};
+  } catch {
+    return {};
+  }
 }

@@ -28,6 +28,8 @@ export type CloudSaveMeta = {
   playTime?: number;
   /** Wall-clock time at which the cartridge's real-time clock read zero. */
   rtcBase?: number;
+  /** A picture of the game from just before this save was made is kept with it. */
+  hasScreenshot?: true;
 };
 
 export type CloudSaveResponse = CloudSaveMeta & {
@@ -49,6 +51,8 @@ export type PutSaveRequest = {
    */
   baseRevision: number | null;
   force?: boolean;
+  /** base64-encoded PNG of the game shortly before it saved (see MAX_SCREENSHOT_BYTES). */
+  screenshot?: string;
 };
 
 export type PutSaveResponse =
@@ -56,6 +60,20 @@ export type PutSaveResponse =
   | { ok: false; conflict: CloudSaveMeta };
 
 export type ListSavesResponse = { saves: CloudSaveMeta[] };
+
+/** Earlier versions of each save kept in the cloud, on top of the current one. */
+export const HISTORY_LIMIT = 4;
+
+/** Largest save screenshot kept (a console screen is at most 256×240, a few tens of KiB as PNG). */
+export const MAX_SCREENSHOT_BYTES = 96 * 1024;
+
+/** A save with its picture, as base64 PNG, if it has one. */
+export type SaveVersion = CloudSaveMeta & { screenshot?: string };
+
+/** One game's current cloud save and its earlier versions (newest first). */
+export type SaveHistoryResponse = { current: SaveVersion | null; versions: SaveVersion[] };
+
+export type RestoreSaveResponse = { save: CloudSaveMeta };
 
 /** Largest ROM of a supported platform (GBA: 32 MiB). */
 export const MAX_ROM_BYTES = 32 * 1024 * 1024;
@@ -88,6 +106,12 @@ export function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+/** Whether `bytes` start like a PNG file. */
+export function isPng(bytes: Uint8Array): boolean {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  return bytes.length > signature.length && signature.every((b, i) => bytes[i] === b);
 }
 
 export function base64ToBytes(base64: string): Uint8Array {

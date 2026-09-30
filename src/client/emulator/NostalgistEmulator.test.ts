@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NostalgistEmulator } from "./NostalgistEmulator";
 
 const SRAM_PATH = "/home/web_user/retroarch/userdata/saves/mGBA/game.srm";
+const SCREENSHOTS_DIR = "/home/web_user/retroarch/userdata/screenshots";
 
 /** Whether RetroArch's AudioContext starts running (desktop) or suspended (no user gesture yet). */
 let audioStartsSuspended = false;
@@ -31,6 +32,8 @@ class FakeNostalgist {
         if (!data) throw new Error("ENOENT");
         return data;
       },
+      readdir: (dir: string) => [".", "..", ...[...this.files.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1))],
+      unlink: (path: string) => void this.files.delete(path),
     },
     _cmd_savefiles: vi.fn(() => {
       if (this.gameSram) this.files.set(SRAM_PATH, this.gameSram.slice());
@@ -69,6 +72,14 @@ class FakeNostalgist {
   constructor(readonly options: Record<string, unknown>) {}
   getStatus = () => this.status;
   getEmscriptenModule = () => this.module;
+  getEmscriptenFS = () => this.module.FS;
+  /** screenshot() never answers (its file got a name Nostalgist didn't guess). */
+  stallScreenshot = false;
+  /** Writes a PNG like RetroArch does; `name`: the one it got, which Nostalgist may not find. */
+  screenshot = vi.fn((name = "game-260929-120000.png") => {
+    this.files.set(`${SCREENSHOTS_DIR}/${name}`, new Uint8Array([0x89, 0x50]));
+    return this.stallScreenshot ? new Promise<never>(() => {}) : Promise.resolve(new Blob([new Uint8Array([0x89, 0x50])]));
+  });
 }
 
 const nostalgists: FakeNostalgist[] = [];
@@ -385,6 +396,22 @@ describe("NostalgistEmulator", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(emu.running).toBe(false);
+  });
+
+  it("takes a screenshot and clears every PNG RetroArch left, even when one is never found", async () => {
+    const { emu, core } = await started();
+    // An earlier screenshot whose name Nostalgist guessed wrong (the second rolled over).
+    core.files.set(`${SCREENSHOTS_DIR}/game-260929-115959.png`, bytes(1));
+    expect(await emu.screenshot()).toBeInstanceOf(Blob);
+    expect([...core.files.keys()].filter((p) => p.startsWith(SCREENSHOTS_DIR))).toEqual([]);
+
+    core.stallScreenshot = true;
+    const late = emu.screenshot();
+    const rejected = expect(late).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(3000);
+    await rejected;
+    expect([...core.files.keys()].filter((p) => p.startsWith(SCREENSHOTS_DIR))).toEqual([]);
+    expect(emu.screenshotEveryMs).toBe(5000);
   });
 
   it("tears everything down on destroy()", async () => {

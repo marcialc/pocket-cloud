@@ -30,6 +30,8 @@ export type LocalGameSave = {
    * Missing on saves made before the clock was emulated.
    */
   rtcBase?: number;
+  /** PNG of the game shortly before this save was made (see saveShots.ts), uploaded with it. */
+  screenshot?: ArrayBuffer;
   cloud: CloudSyncState | null;
 };
 

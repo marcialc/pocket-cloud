@@ -8,6 +8,8 @@ import {
   type PutSaveRequest,
   type PutSaveResponse,
   type PutSettingsRequest,
+  type RestoreSaveResponse,
+  type SaveHistoryResponse,
   type SettingsResponse,
 } from "../../shared/api";
 import { getPlayerKey } from "./identity";
@@ -20,6 +22,8 @@ export class CloudUnavailableError extends Error {}
 export class SettingsRejectedError extends Error {}
 
 const TIMEOUT_MS = 8000;
+/** Largest body a keepalive fetch may send (64 KiB, less room for headers). */
+const KEEPALIVE_BODY_BYTES = 60 * 1024;
 
 async function call(path: string, init: RequestInit = {}, timeoutMs = TIMEOUT_MS): Promise<Response> {
   try {
@@ -49,9 +53,16 @@ export async function pushCloudSave(
   save: Omit<PutSaveRequest, "sram"> & { sram: Uint8Array },
   options: { keepalive?: boolean } = {},
 ): Promise<PutSaveResponse> {
+  let body = JSON.stringify({ ...save, sram: bytesToBase64(save.sram) } satisfies PutSaveRequest);
+  // Browsers refuse a keepalive request whose body is over 64 KiB: the picture is what gives way,
+  // so the save still gets out as the page goes away (it's stored without one).
+  if (options.keepalive && save.screenshot && body.length > KEEPALIVE_BODY_BYTES) {
+    const { screenshot: _dropped, ...rest } = save;
+    body = JSON.stringify({ ...rest, sram: bytesToBase64(save.sram) } satisfies PutSaveRequest);
+  }
   const res = await call(`/saves/${romHash}`, {
     method: "PUT",
-    body: JSON.stringify({ ...save, sram: bytesToBase64(save.sram) } satisfies PutSaveRequest),
+    body,
     ...(options.keepalive ? { keepalive: true } : {}),
   });
   if (res.status !== 200 && res.status !== 409) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
@@ -69,6 +80,34 @@ export async function listCloudSaves(): Promise<CloudSaveMeta[]> {
 export async function deleteCloudSave(romHash: string): Promise<void> {
   const res = await call(`/saves/${romHash}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+}
+
+/** A game's current cloud save and its earlier versions (newest first), with their pictures. */
+export async function listCloudSaveHistory(romHash: string): Promise<SaveHistoryResponse> {
+  const res = await call(`/saves/${romHash}/history`);
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+  return res.json();
+}
+
+/** One earlier version, or null if it isn't kept any more. */
+export async function fetchCloudSaveVersion(romHash: string, revision: number): Promise<CloudSave | null> {
+  const res = await call(`/saves/${romHash}/history/${revision}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+  const body: CloudSaveResponse = await res.json();
+  return { ...body, sram: base64ToBytes(body.sram) };
+}
+
+/**
+ * Makes an earlier version the current cloud save. Devices pick it up the next
+ * time they open the game. Null if that version isn't kept any more.
+ */
+export async function restoreCloudSaveVersion(romHash: string, revision: number): Promise<CloudSaveMeta | null> {
+  const res = await call(`/saves/${romHash}/history/${revision}/restore`, { method: "POST" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new CloudUnavailableError(`Unexpected status ${res.status}`);
+  const body: RestoreSaveResponse = await res.json();
+  return body.save;
 }
 
 /** The server refused a ROM request (e.g. "sign_in_required", "library_full"). */
