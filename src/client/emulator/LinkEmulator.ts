@@ -1,3 +1,4 @@
+import { unzlibSync } from "fflate";
 import type { Button } from "../../shared/platforms";
 import type { Emulator } from "./Emulator";
 
@@ -66,7 +67,9 @@ export class LinkEmulator implements Emulator {
   private frame: Uint16Array | null = null;
   private image: ImageData | null = null;
   private pixels: Uint32Array | null = null;
-  private queue: Promise<void> = Promise.resolve();
+  /** Where each frame's XOR delta unpacks to, and the same bytes as pixels. */
+  private deltaBytes: Uint8Array | null = null;
+  private delta: Uint16Array | null = null;
   private soundAt = 0;
   private readonly gain: GainNode | null;
   private volume = 1;
@@ -196,10 +199,10 @@ export class LinkEmulator implements Emulator {
     socket.onopen = () => this.sendKeys();
     socket.onmessage = (event: MessageEvent<ArrayBuffer>) => {
       const data = new Uint8Array(event.data);
-      const arrived = performance.now();
       if (data[0] === MSG_FRAME) this.stats.frames++;
-      // Frames decode asynchronously; chained so they apply in order.
-      this.queue = this.queue.then(() => this.handle(data, socket, arrived)).catch((err: unknown) => console.warn("Bad link frame", err));
+      // Synchronous, frame by frame: an async decode took several event-loop
+      // turns per frame, and on a busy page frames queued up behind each other.
+      this.handle(data, socket, performance.now());
     };
     socket.onclose = () => {
       if (this.destroyed) return;
@@ -207,7 +210,7 @@ export class LinkEmulator implements Emulator {
     };
   }
 
-  private async handle(data: Uint8Array, socket: WebSocket, arrived: number): Promise<void> {
+  private handle(data: Uint8Array, socket: WebSocket, arrived: number): void {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     switch (data[0]) {
       case MSG_HELLO: {
@@ -218,11 +221,15 @@ export class LinkEmulator implements Emulator {
         this.frame = new Uint16Array(width * height);
         this.image = this.ctx.createImageData(width, height);
         this.pixels = new Uint32Array(this.image.data.buffer);
+        this.deltaBytes = new Uint8Array(width * height * 2);
+        this.delta = new Uint16Array(this.deltaBytes.buffer);
         return;
       }
       case MSG_FRAME:
         try {
-          await this.drawFrame(data.subarray(5));
+          this.drawFrame(data.subarray(5));
+        } catch (err) {
+          console.warn("Bad link frame", err);
         } finally {
           this.sendDrawn(socket, view.getUint32(1, true));
           const wait = performance.now() - arrived;
@@ -243,12 +250,10 @@ export class LinkEmulator implements Emulator {
     }
   }
 
-  private async drawFrame(packed: Uint8Array): Promise<void> {
-    const { frame, pixels, image } = this;
-    if (!frame || !pixels || !image) return;
-    const stream = new Blob([packed as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate"));
-    const delta = new Uint16Array(await new Response(stream).arrayBuffer());
-    if (this.destroyed || delta.length !== frame.length) return;
+  private drawFrame(packed: Uint8Array): void {
+    const { frame, pixels, image, deltaBytes, delta } = this;
+    if (!frame || !pixels || !image || !deltaBytes || !delta || this.destroyed) return;
+    if (unzlibSync(packed, { out: deltaBytes }).length !== deltaBytes.length) return;
     for (let i = 0; i < frame.length; i++) {
       const v = (frame[i]! ^= delta[i]!);
       pixels[i] = 0xff000000 | (expand5((v >> 10) & 31) << 16) | (expand5((v >> 5) & 31) << 8) | expand5(v & 31);

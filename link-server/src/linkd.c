@@ -81,9 +81,10 @@
  * per player. */
 #define AUDIO_TARGET_RATE 16384
 #define AUDIO_RING 16384
-/* Frames sent but not yet drawn by the client, at most: enough for 60 fps
- * over a ~100 ms round trip, and no more than ~100 ms of queued picture. */
-#define FRAMES_AHEAD 6
+/* Frames sent but not yet drawn by the client, at most. 60 fps needs a round
+ * trip's worth in flight (6 was 40-50 fps over the ~110 ms players saw in
+ * production); a client that can't keep up queues no more than this. */
+#define FRAMES_AHEAD 10
 /* Send times of the last this many frames, to time them until drawn. */
 #define SENT_RING 64
 /* How often each player's stream stats are logged. */
