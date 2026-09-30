@@ -6,6 +6,7 @@ import {
   padButtonName,
   padButtons,
   padName,
+  padsInUse,
   sanitizeAllPadBindings,
   sanitizePadBindings,
 } from "./gamepad";
@@ -22,6 +23,14 @@ function pad(pressed: number[], axes: number[] = [0, 0]) {
 const sorted = (set: Set<string>) => [...set].sort();
 
 describe("gamepad", () => {
+  it("sees a controller in use once a button or the stick moves, not while it rests", () => {
+    expect(padsInUse([])).toBe(false);
+    expect(padsInUse([pad([])])).toBe(false);
+    expect(padsInUse([pad([], [0.2, -0.1])])).toBe(false);
+    expect(padsInUse([pad([]), pad([0])])).toBe(true);
+    expect(padsInUse([pad([], [0, -0.9])])).toBe(true);
+  });
+
   it("maps standard-layout buttons by position by default", () => {
     expect(sorted(padButtons(pad([1, 0, 9, 8]), GB))).toEqual(["a", "b", "select", "start"]);
     expect(sorted(padButtons(pad([12, 15, 4, 5, 2, 3]), SNES))).toEqual(["l", "r", "right", "up", "x", "y"]);

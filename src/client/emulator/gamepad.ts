@@ -114,6 +114,14 @@ export function pressedIndexes(pad: PadLike & { id?: string }): number[] {
   return [...pad.buttons.flatMap((b, i) => (b.pressed ? [i] : [])), ...hatIndexes(pad)];
 }
 
+/** Whether any of these gamepads is being played with right now: a button, hat or stick is pressed. */
+export function padsInUse(pads: readonly (PadLike & { id?: string })[]): boolean {
+  return pads.some((pad) => {
+    const [x = 0, y = 0] = pad.axes;
+    return pressedIndexes(pad).length > 0 || Math.abs(x) >= STICK_THRESHOLD || Math.abs(y) >= STICK_THRESHOLD;
+  });
+}
+
 /** The buttons one gamepad is holding right now; the left stick always doubles as the D-pad. */
 export function padButtons(pad: PadLike & { id?: string }, bindings: PadBindings): Set<Button> {
   const map = keyMap(bindings);

@@ -4,7 +4,7 @@ import type { SaveVersion } from "../../shared/api";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
-import { bindGamepads } from "../emulator/gamepad";
+import { bindGamepads, padsInUse, pollGamepads } from "../emulator/gamepad";
 import { createEmulator } from "../emulator/createEmulator";
 import type { Emulator } from "../emulator/Emulator";
 import { scoreWatcherFor } from "../emulator/scoreWatch";
@@ -200,6 +200,23 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     () => (emulator && panel !== "controls" ? bindGamepads(emulator, padBindings) : undefined),
     [emulator, panel, padBindings],
   );
+
+  // Playing with a controller hides the touch gamepad (phones only; it isn't shown elsewhere) until
+  // the screen is touched or the last controller goes away. Waits for a press, not a connection:
+  // a paired controller can sit asleep in a bag.
+  const [padPlaying, setPadPlaying] = useState(false);
+  useEffect(() => {
+    if (!prefs.hideTouchWithPad) return;
+    if (!padPlaying) return pollGamepads((pads) => padsInUse(pads) && setPadPlaying(true));
+    const onTouch = (e: PointerEvent) => e.pointerType === "touch" && setPadPlaying(false);
+    const onDisconnect = () => !navigator.getGamepads().some((pad) => pad?.connected) && setPadPlaying(false);
+    window.addEventListener("pointerdown", onTouch, true);
+    window.addEventListener("gamepaddisconnected", onDisconnect);
+    return () => {
+      window.removeEventListener("pointerdown", onTouch, true);
+      window.removeEventListener("gamepaddisconnected", onDisconnect);
+    };
+  }, [prefs.hideTouchWithPad, padPlaying]);
 
   // Mirror preferences into the running emulator / sync loop.
   useEffect(() => {
@@ -476,7 +493,12 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         </section>
       </div>
 
-      <TouchControls emulator={emulator} platform={session.rom.platform} haptics={prefs.haptics} />
+      <TouchControls
+        emulator={emulator}
+        platform={session.rom.platform}
+        haptics={prefs.haptics}
+        hidden={prefs.hideTouchWithPad && padPlaying}
+      />
 
       <div className="toolbar-wrap">
         <div className="toolbar plastic" role="toolbar" aria-label="Game controls">
