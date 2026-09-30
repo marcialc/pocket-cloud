@@ -183,6 +183,37 @@ describe("SaveSync", () => {
     b.destroy();
   });
 
+  describe("adopt()", () => {
+    it("keeps a save from a link as the newest one and uploads it at once", async () => {
+      const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        return Response.json({ ok: true, save: { ...body, romHash: ROM.romHash, sramSize: 16, revision: 1, createdAt: 1, sram: undefined } });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const emu = fakeEmulator();
+      const forSave = vi.fn(async () => null);
+      const sync = new SaveSync(emu, ROM, null, true, RTC_BASE, { forSave });
+      await sync.adopt(new Uint8Array([9, 8, 7]));
+      const local = await getLocalSave(ROM.romHash);
+      expect(Array.from(new Uint8Array(local!.sram))).toEqual([9, 8, 7]);
+      expect(local!.rtcBase).toBe(RTC_BASE);
+      // The emulator's screen is from before the link, so no picture goes with it.
+      expect(forSave).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      sync.destroy();
+    });
+
+    it("still captures the game's next write after it", async () => {
+      const emu = fakeEmulator();
+      const sync = new SaveSync(emu, ROM, null, false, RTC_BASE);
+      await sync.adopt(new Uint8Array([1]));
+      emu.gameWrites([2]);
+      await sync.flush();
+      expect(Array.from(new Uint8Array((await getLocalSave(ROM.romHash))!.sram)).slice(0, 1)).toEqual([2]);
+      sync.destroy();
+    });
+  });
+
   describe("after a conflict", () => {
     /** A save both sides agreed on at revision 1. */
     const synced = (): LocalGameSave => ({

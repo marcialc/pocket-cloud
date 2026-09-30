@@ -678,6 +678,10 @@ kbd.empty { color: var(--ink-2); }
   color: var(--lcd-dark); background: rgba(167, 179, 154, 0.78);
 }
 .lcd-overlay span { font-size: clamp(14px, calc(7px * var(--scale, 3)), 22px); }
+/* The game streamed from the link server, over this device's own (paused) screen. */
+.lcd canvas.link-screen { position: absolute; inset: 0; }
+.lcd canvas.link-screen[hidden] { display: none; }
+.link-note { margin: 8px auto 0; max-width: 520px; padding: 0 16px; text-align: center; font-size: 13px; color: var(--on-bg-2); }
 .lcd-overlay small { font-size: 9px; }
 .error-overlay small { font: 600 13px var(--sans); }
 .shell-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 0 6px 0 4px; }

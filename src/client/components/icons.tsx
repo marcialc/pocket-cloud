@@ -32,6 +32,7 @@ const PATHS = {
   folder: "M3 6h7l2 2h9v11H3z",
   search: "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20",
   plus: "M12 5v14M5 12h14",
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
 } as const;
 
 export type IconName = keyof typeof PATHS;

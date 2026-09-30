@@ -1,0 +1,59 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// The link server: one LinkRoom Durable Object per link session, each
+	// controlling a container that runs linkd (two GBAs on a link cable).
+	// Not reachable from the internet; the pocket-cloud Worker calls it after
+	// checking sign-in and friendship.
+	//   pnpm wrangler dev -c link-server/worker/wrangler.jsonc   (needs Docker)
+	"name": "pocket-cloud-link",
+	"main": "index.ts",
+	"compatibility_date": "2026-08-15",
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	},
+	"containers": [
+		{
+			"class_name": "LinkRoom",
+			"image": "../Dockerfile",
+			// Two GBAs plus frame compression: about a third of a core in Docker
+			// on an M-series Mac under amd64 emulation. Revisit once measured on
+			// Cloudflare.
+			"instance_type": "standard-1",
+			"max_instances": 20
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "LINK_ROOM",
+				"class_name": "LinkRoom"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"LinkRoom"
+			]
+		}
+	],
+	// A link nobody watches ends after IDLE_MS (saves kept for pickup); a player
+	// waiting for a friend who never plugs in is taken out after WAIT_MS.
+	// Override locally to test, e.g. --var IDLE_MS:20000 --var CHECK_EVERY_MS:5000
+	"vars": {
+		"IDLE_MS": "600000",
+		"WAIT_MS": "1800000",
+		"CHECK_EVERY_MS": "60000"
+	},
+	// Players' cloud ROM libraries (same bucket as the pocket-cloud Worker):
+	// roms/<playerId>/<romHash>.
+	"r2_buckets": [
+		{
+			"binding": "ROMS",
+			"bucket_name": "pocket-cloud-roms"
+		}
+	]
+}

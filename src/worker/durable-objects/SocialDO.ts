@@ -204,6 +204,12 @@ export class SocialDO extends DurableObject<Env> {
     return { status: "requested", friend };
   }
 
+  /** The player behind a friend code, but only if they're this player's friend. */
+  async friendIdByCode(playerId: string, code: string): Promise<string | null> {
+    const target = this.playerByCode(code);
+    return target && this.isFriend(playerId, target.player_id) ? target.player_id : null;
+  }
+
   /** Unfriends, declines their request or cancels yours: whatever links the two of you goes. */
   async removeFriend(playerId: string, code: string): Promise<boolean> {
     const target = this.playerByCode(code);

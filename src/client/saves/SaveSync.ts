@@ -229,6 +229,19 @@ export class SaveSync {
     }
   }
 
+  /**
+   * A save for this game made somewhere else: a link session with a friend
+   * (the game ran on the link server). It becomes this device's newest save
+   * and goes to the cloud like one the game wrote. The caller reboots the
+   * emulator with it.
+   */
+  async adopt(sram: Uint8Array): Promise<void> {
+    const run = this.capturing.then(() => this.record(sram.slice(), null, 0));
+    // The chain itself never rejects, or the game's next write would be skipped.
+    this.capturing = run.catch(() => {});
+    await run;
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.unsubscribe();
@@ -247,11 +260,24 @@ export class SaveSync {
   private async captureNow(): Promise<void> {
     const sram = this.emulator.getSram();
     if (!sram) return;
+    const shots = this.shots;
+    await this.record(sram, shots && ((at) => shots.forSave(at)), null);
+  }
+
+  /**
+   * Keeps `sram` as the newest save and schedules its upload: after
+   * `pushDelayMs`, or on the usual timing when null.
+   */
+  private async record(
+    sram: Uint8Array,
+    picture: ((savedAt: number) => Promise<ArrayBuffer | null>) | null,
+    pushDelayMs: number | null,
+  ): Promise<void> {
     const sramHash = await sha256Hex(sram);
     if (sramHash === this.local?.sramHash) return; // RAM-enable toggles etc. without real changes.
     this.bankPlayTime();
     const updatedAt = Date.now();
-    const screenshot = await this.shots?.forSave(updatedAt).catch((err: unknown) => {
+    const screenshot = await picture?.(updatedAt).catch((err: unknown) => {
       console.warn("Could not keep a picture with the save", err);
       return null;
     });
@@ -277,7 +303,7 @@ export class SaveSync {
     if (this.status.state === "conflict") return;
     this.setStatus({ state: "saved-local", at: this.local.updatedAt });
     if (!this.firstDirtyAt) this.firstDirtyAt = Date.now();
-    this.schedulePush(nextPushDelay(Date.now(), this.firstDirtyAt, PUSH_TIMING));
+    this.schedulePush(pushDelayMs ?? nextPushDelay(Date.now(), this.firstDirtyAt, PUSH_TIMING));
   }
 
   private bankPlayTime(): void {

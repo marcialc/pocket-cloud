@@ -70,6 +70,15 @@
 			"binding": "pocket_cloud_roms_preview"
 		}
 	],
+	// GBA link play: the pocket-cloud-link Worker (link-server/worker) runs both
+	// games in a container. It must be deployed before this binding is, or the
+	// deploy fails. Previews have no link server (/api/link answers 503).
+	"services": [
+		{
+			"binding": "LINK",
+			"service": "pocket-cloud-link"
+		}
+	],
 	// Sign-in codes are sent from login@pocketcloud.app (Cloudflare Email Service).
 	"send_email": [
 		{

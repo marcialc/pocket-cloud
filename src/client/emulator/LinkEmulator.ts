@@ -1,0 +1,205 @@
+import type { Button } from "../../shared/platforms";
+import type { Emulator } from "./Emulator";
+
+/**
+ * The game while linked with a friend: it runs on the link server (both GBAs
+ * in one container, see link-server/), and this shows its screen and sound
+ * and sends the buttons back over a WebSocket. It implements Emulator so the
+ * keyboard, gamepad and touch controls and the volume work unchanged; there's
+ * no battery save here (it comes back when the cable is pulled) and no pause,
+ * since the friend's game runs on the same cable.
+ *
+ * Protocol (link-server/src/linkd.c), binary messages, little-endian:
+ *   server: 0x00 player width(u16) height(u16) | 0x01 seq(u32) zlib(BGR555 XOR
+ *           previous frame) | 0x02 ping echo | 0x03 rate(u32) mu-law sound
+ *   client: 0x01 keys(u16) | 0x02 8-byte ping
+ */
+
+const MSG_HELLO = 0x00;
+const MSG_FRAME = 0x01;
+const MSG_KEYS = 0x01;
+const MSG_AUDIO = 0x03;
+
+// GBA key bits: A B Select Start Right Left Up Down R L.
+const KEY_BITS: Partial<Record<Button, number>> = {
+  a: 0, b: 1, select: 2, start: 3, right: 4, left: 5, up: 6, down: 7, r: 8, l: 9,
+};
+
+// Sound is scheduled this far ahead to ride out network jitter; further
+// behind than AUDIO_MAX_AHEAD (clock drift, a stall) and it catches up.
+const AUDIO_LEAD = 0.08;
+const AUDIO_MAX_AHEAD = 0.3;
+const RECONNECT_MS = 1500;
+
+const MULAW = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const u = ~i & 0xff;
+  const exponent = (u >> 4) & 7;
+  const magnitude = ((((u & 0x0f) << 3) + 0x84) << exponent) - 0x84;
+  MULAW[i] = ((u & 0x80) ? -magnitude : magnitude) / 32768;
+}
+
+let audio: AudioContext | null = null;
+
+/** Browsers only start sound after a click or key press: call from one (the Plug in button). */
+export function unlockLinkAudio(): void {
+  audio ??= new AudioContext();
+  if (audio.state === "suspended") void audio.resume();
+}
+
+export class LinkEmulator implements Emulator {
+  readonly running = true;
+  lastInputAt = 0;
+  private socket: WebSocket | null = null;
+  private keys = 0;
+  private frame: Uint16Array | null = null;
+  private image: ImageData | null = null;
+  private pixels: Uint32Array | null = null;
+  private queue: Promise<void> = Promise.resolve();
+  private soundAt = 0;
+  private readonly gain: GainNode | null;
+  private volume = 1;
+  private muted = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
+  private readonly ctx: CanvasRenderingContext2D;
+
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly url: string,
+  ) {
+    this.ctx = canvas.getContext("2d")!;
+    this.gain = audio ? audio.createGain() : null;
+    this.gain?.connect(audio!.destination);
+    this.connect();
+  }
+
+  async loadRom(): Promise<void> {}
+  start(): void {}
+  pause(): void {}
+  reset(): void {}
+
+  buttonDown(button: Button): void {
+    const bit = KEY_BITS[button];
+    if (bit === undefined) return;
+    this.lastInputAt = performance.now();
+    if (audio?.state === "suspended") void audio.resume();
+    this.setKeys(this.keys | (1 << bit));
+  }
+
+  buttonUp(button: Button): void {
+    const bit = KEY_BITS[button];
+    if (bit !== undefined) this.setKeys(this.keys & ~(1 << bit));
+  }
+
+  getSram(): Uint8Array | null {
+    return null;
+  }
+  loadSram(): void {}
+  onSramWrite(): () => void {
+    return () => {};
+  }
+  flushSramWrites(): void {}
+
+  setVolume(volume: number): void {
+    this.volume = volume;
+    this.applyVolume();
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.applyVolume();
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.socket?.close();
+    this.socket = null;
+    this.gain?.disconnect();
+  }
+
+  private applyVolume(): void {
+    if (this.gain) this.gain.gain.value = this.muted ? 0 : this.volume;
+  }
+
+  private setKeys(keys: number): void {
+    if (keys === this.keys) return;
+    this.keys = keys;
+    this.sendKeys();
+  }
+
+  private sendKeys(): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(new Uint8Array([MSG_KEYS, this.keys & 0xff, this.keys >> 8]));
+    }
+  }
+
+  /** Stays connected while the link lasts; the game screen ends it when the link does. */
+  private connect(): void {
+    const socket = new WebSocket(this.url);
+    socket.binaryType = "arraybuffer";
+    this.socket = socket;
+    socket.onopen = () => this.sendKeys();
+    socket.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+      const data = new Uint8Array(event.data);
+      // Frames decode asynchronously; chained so they apply in order.
+      this.queue = this.queue.then(() => this.handle(data)).catch((err: unknown) => console.warn("Bad link frame", err));
+    };
+    socket.onclose = () => {
+      if (this.destroyed) return;
+      this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_MS);
+    };
+  }
+
+  private async handle(data: Uint8Array): Promise<void> {
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    switch (data[0]) {
+      case MSG_HELLO: {
+        const width = view.getUint16(2, true);
+        const height = view.getUint16(4, true);
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.frame = new Uint16Array(width * height);
+        this.image = this.ctx.createImageData(width, height);
+        this.pixels = new Uint32Array(this.image.data.buffer);
+        return;
+      }
+      case MSG_FRAME:
+        return this.drawFrame(data.subarray(5));
+      case MSG_AUDIO:
+        return this.playSound(view.getUint32(1, true), data.subarray(5));
+    }
+  }
+
+  private async drawFrame(packed: Uint8Array): Promise<void> {
+    const { frame, pixels, image } = this;
+    if (!frame || !pixels || !image) return;
+    const stream = new Blob([packed as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate"));
+    const delta = new Uint16Array(await new Response(stream).arrayBuffer());
+    if (this.destroyed || delta.length !== frame.length) return;
+    for (let i = 0; i < frame.length; i++) {
+      const v = (frame[i]! ^= delta[i]!);
+      pixels[i] = 0xff000000 | (expand5((v >> 10) & 31) << 16) | (expand5((v >> 5) & 31) << 8) | expand5(v & 31);
+    }
+    this.ctx.putImageData(image, 0, 0);
+  }
+
+  private playSound(rate: number, bytes: Uint8Array): void {
+    if (!audio || !this.gain || audio.state !== "running" || !bytes.length) return;
+    const buffer = audio.createBuffer(1, bytes.length, rate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < bytes.length; i++) samples[i] = MULAW[bytes[i]!]!;
+    const now = audio.currentTime;
+    if (this.soundAt < now + 0.01 || this.soundAt > now + AUDIO_MAX_AHEAD) this.soundAt = now + AUDIO_LEAD;
+    const source = audio.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.gain);
+    source.start(this.soundAt);
+    this.soundAt += buffer.duration;
+  }
+}
+
+function expand5(v: number): number {
+  return (v << 3) | (v >> 2);
+}

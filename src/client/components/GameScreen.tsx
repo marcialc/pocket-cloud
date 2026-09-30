@@ -1,12 +1,14 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
 import type { SaveVersion } from "../../shared/api";
+import type { Profile } from "../../shared/social";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
 import { bindGamepads, padsInUse, pollGamepads } from "../emulator/gamepad";
 import { createEmulator } from "../emulator/createEmulator";
 import type { Emulator } from "../emulator/Emulator";
+import { LinkEmulator, unlockLinkAudio } from "../emulator/LinkEmulator";
 import { scoreWatcherFor } from "../emulator/scoreWatch";
 import { keyLabel, type KeyBindings } from "../emulator/keyBindings";
 import { displayName } from "../emulator/rom";
@@ -14,6 +16,16 @@ import { resetCloudRomsChoice, type Preferences } from "../preferences";
 import { signOut } from "../saves/authApi";
 import { fetchCloudSave } from "../saves/cloudApi";
 import { lockGame, waitForGame, type GameLock } from "../saves/gameLock";
+import {
+  LinkError,
+  fetchLinkStatus,
+  linkErrorMessage,
+  linkSocketUrl,
+  plugIn,
+  takeLinkSave,
+  unplug,
+  type LinkStatus,
+} from "../saves/linkApi";
 import { resetPlayerKey } from "../saves/identity";
 import { reportScore } from "../saves/socialApi";
 import { clearCloudSyncState } from "../saves/localSaves";
@@ -24,6 +36,7 @@ import { CloudPanel } from "./CloudPanel";
 import { ConflictPause } from "./conflictPause";
 import { ControlsPanel } from "./ControlsPanel";
 import { FriendsPanel } from "./FriendsPanel";
+import { LinkPanel } from "./LinkPanel";
 import { Modal } from "./Modal";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
@@ -47,6 +60,15 @@ const DIM_AFTER_MS = 2500;
 const RESUME_SNAPSHOT_MS = 30_000;
 // iPhone Safari can't make a page element fullscreen, so the button is hidden there.
 const CAN_FULLSCREEN = document.fullscreenEnabled === true;
+/** How often the link's state is checked while waiting for the friend or linked. */
+const LINK_POLL_MS = 2000;
+
+/**
+ * A link cable session with a friend (GBA only). While it's on, the game runs
+ * on the link server: the local emulator is paused and a LinkEmulator shows
+ * the streamed screen and takes the buttons.
+ */
+type LinkSession = { friend: Profile; phase: "plugging" | "waiting" | "linked" | "unplugging" };
 
 export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props) {
   const root = useRef<HTMLDivElement>(null);
@@ -60,7 +82,14 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [error, setError] = useState<string | null>(null);
   /** Another tab is playing this game, so this one never boots. */
   const [openElsewhere, setOpenElsewhere] = useState(false);
-  const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
+  const [panel, setPanel] = useState<"account" | "controls" | "friends" | "link" | null>(null);
+  const [link, setLink] = useState<LinkSession | null>(null);
+  const [linkEmu, setLinkEmu] = useState<LinkEmulator | null>(null);
+  const [linkNote, setLinkNote] = useState<string | null>(null);
+  const linkCanvas = useRef<HTMLCanvasElement>(null);
+  /** Read by setRunning, which must never start the local game under a link. */
+  const linkOn = useRef(false);
+  linkOn.current = link !== null;
   const [menu, setMenu] = useState(false);
   const [gallery, setGallery] = useState(false);
   /** Frames kept for the pictures shown with saves. */
@@ -192,13 +221,16 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     };
   }, [emulator, signedIn, session.rom]);
 
+  // While linked, the controls drive the game on the link server instead.
+  const playing = linkEmu ?? emulator;
+
   // Keyboard input; re-bound whenever the player remaps keys.
-  useEffect(() => (emulator ? bindKeyboard(emulator, bindings) : undefined), [emulator, bindings]);
+  useEffect(() => (playing ? bindKeyboard(playing, bindings) : undefined), [playing, bindings]);
   // Game controllers (Gamepad API). Like keys, they don't reach the game while the
   // Controls panel is open, where they light up its drawing and get remapped.
   useEffect(
-    () => (emulator && panel !== "controls" ? bindGamepads(emulator, padBindings) : undefined),
-    [emulator, panel, padBindings],
+    () => (playing && panel !== "controls" ? bindGamepads(playing, padBindings) : undefined),
+    [playing, panel, padBindings],
   );
 
   // Playing with a controller hides the touch gamepad (phones only; it isn't shown elsewhere) until
@@ -220,9 +252,9 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   // Mirror preferences into the running emulator / sync loop.
   useEffect(() => {
-    emulator?.setVolume(prefs.volume);
-    emulator?.setMuted(prefs.muted);
-  }, [emulator, prefs.volume, prefs.muted]);
+    playing?.setVolume(prefs.volume);
+    playing?.setMuted(prefs.muted);
+  }, [playing, prefs.volume, prefs.muted]);
   useEffect(() => sync?.setCloudEnabled(prefs.cloudSync), [sync, prefs.cloudSync]);
 
   // Fill the space (times the "Screen size" setting), rounded down to whole device pixels
@@ -265,6 +297,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     (run: boolean) => {
       if (!emulator) return;
       if (run && !conflictPause.mayRun()) return;
+      // The game is on the link server; this device's copy stays paused until the cable is pulled.
+      if (run && linkOn.current) return;
       if (run) emulator.start();
       else emulator.pause();
       sync?.setPlaying(run);
@@ -416,14 +450,148 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     window.location.reload();
   };
 
+  /**
+   * A save that came back from a link: keep it, and restart the game from it.
+   * If the link didn't change it, the game just carries on from where it was
+   * paused, like pulling a real cable after doing nothing.
+   */
+  const applyLinkSave = async (sram: Uint8Array): Promise<boolean> => {
+    if (!emulator || !sync) return false;
+    const current = emulator.getSram();
+    if (current && current.length === sram.length && current.every((byte, i) => byte === sram[i])) return false;
+    await sync.adopt(sram);
+    emulator.loadSram(sram);
+    emulator.setClock?.(sync.getRtcBase());
+    emulator.reset();
+    shots.current?.clear();
+    return true;
+  };
+
+  /** Back to playing on this device, with whatever the link left. */
+  const endLink = (note: string | null) => {
+    setLink(null);
+    setLinkNote(note);
+    linkOn.current = false;
+    setRunning(true);
+  };
+
+  /** Picks up this player's save once a link has ended (by the friend, or timed out). */
+  const collectLinkSave = async (friend: Profile): Promise<string | null> => {
+    const saved = await takeLinkSave(friend.friendCode);
+    if (!saved) return "The link ended.";
+    if (saved.romHash !== session.rom.romHash) return "The link ended. Your save from it is waiting in the game you played.";
+    return (await applyLinkSave(saved.sram)) ? "The link ended. Your save from it is loaded." : "The link ended.";
+  };
+
+  const plug = async (friend: Profile) => {
+    if (!emulator || !sync || link) return;
+    unlockLinkAudio();
+    setPanel(null);
+    setLinkNote(null);
+    setLink({ friend, phase: "plugging" });
+    linkOn.current = true;
+    const wasRunning = emulator.running;
+    if (wasRunning) emulator.pause();
+    sync.setPlaying(false);
+    setPaused(true);
+    try {
+      // The link starts from the save as it is now, so it goes to the cloud first.
+      await sync.flush({ keepalive: false });
+      let status: LinkStatus;
+      try {
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram());
+      } catch (err) {
+        if (!(err instanceof LinkError && err.code === "collect_save_first")) throw err;
+        // A save from the last link with this friend: take it (it's newer), then plug in with it.
+        const saved = await takeLinkSave(friend.friendCode);
+        if (saved && saved.romHash !== session.rom.romHash) throw err;
+        if (saved) await applyLinkSave(saved.sram);
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram());
+      }
+      if (status.state === "failed") {
+        await unplug(friend.friendCode).catch(() => null);
+        return endLink(linkErrorMessage(status.error));
+      }
+      setLink({ friend, phase: status.state === "linked" ? "linked" : "waiting" });
+    } catch (err) {
+      endLink(linkErrorMessage(err));
+    }
+  };
+
+  /** Pulls the cable (or stops waiting): ends the link for both. */
+  const unplugLink = async () => {
+    if (!link || link.phase === "unplugging" || link.phase === "plugging") return;
+    const { friend } = link;
+    setLink({ friend, phase: "unplugging" });
+    try {
+      const { save, lost } = await unplug(friend.friendCode);
+      if (save && save.romHash === session.rom.romHash) {
+        return endLink((await applyLinkSave(save.sram)) ? "Unplugged. Your save from the link is loaded." : "Unplugged.");
+      }
+      endLink(lost ? "Unplugged. The link’s save couldn’t be recovered, so your save from before is kept." : link.phase === "linked" ? "Unplugged." : null);
+    } catch (err) {
+      // Still linked as far as we know; stay put so the player can try again.
+      setLink({ friend, phase: link.phase });
+      setLinkNote(linkErrorMessage(err));
+    }
+  };
+
+  // Follow the link while waiting for the friend or linked: start showing it once both are in,
+  // and come back to this device's game when it ends (the friend unplugged, it failed or timed out).
+  const linkPhase = link?.phase;
+  const linkFriend = link?.friend;
+  useEffect(() => {
+    if (!linkFriend || (linkPhase !== "waiting" && linkPhase !== "linked")) return;
+    let stopped = false;
+    const check = async () => {
+      let status: LinkStatus;
+      try {
+        status = await fetchLinkStatus(linkFriend.friendCode);
+      } catch {
+        return; // A blip; try again next time.
+      }
+      if (stopped) return;
+      if (status.state === "linked") {
+        if (linkPhase === "waiting") setLink({ friend: linkFriend, phase: "linked" });
+        return;
+      }
+      if (status.state === "waiting" || status.state === "starting" || status.state === "ending") return;
+      stopped = true;
+      if (status.state === "failed") {
+        await unplug(linkFriend.friendCode).catch(() => null);
+        return endLink(linkErrorMessage(status.error));
+      }
+      if (linkPhase === "waiting") return endLink(`${linkFriend.name} didn’t plug in, so the cable was put away.`);
+      endLink(await collectLinkSave(linkFriend).catch((err: unknown) => linkErrorMessage(err)));
+    };
+    const timer = setInterval(() => void check(), LINK_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the link's phase and friend only
+  }, [linkPhase, linkFriend]);
+
+  // The streamed screen, while linked.
+  useEffect(() => {
+    if (linkPhase !== "linked" || !linkFriend || !linkCanvas.current) return;
+    const emu = new LinkEmulator(linkCanvas.current, linkSocketUrl(linkFriend.friendCode));
+    setLinkEmu(emu);
+    return () => {
+      emu.destroy();
+      setLinkEmu(null);
+    };
+  }, [linkPhase, linkFriend]);
+
+  const canLink = signedIn && session.rom.platform === "gba";
   const localSave = sync?.getLocal() ?? session.save;
   const muted = prefs.muted || prefs.volume === 0;
   const overlayOpen = panel !== null || menu || confirmReset || gallery;
 
   const tools: { icon: IconName; label: string; onClick: () => void; pressed?: boolean; disabled?: boolean }[] = [
-    { icon: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", onClick: togglePause, disabled: !emulator },
-    { icon: "sync", label: "Sync now", onClick: () => void sync?.flush(), disabled: !sync || !prefs.cloudSync },
-    { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator },
+    { icon: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", onClick: togglePause, disabled: !emulator || !!link },
+    { icon: "sync", label: "Sync now", onClick: () => void sync?.flush(), disabled: !sync || !prefs.cloudSync || !!link },
+    { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator || !!link },
   ];
 
   return (
@@ -461,7 +629,31 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
             </span>
             <div className="lcd">
               <canvas ref={canvas} width={LCD_W} height={LCD_H} role="img" aria-label={`${title} screen`} />
-              {paused && !error && !flash && (
+              <canvas
+                ref={linkCanvas}
+                className="link-screen"
+                width={LCD_W}
+                height={LCD_H}
+                hidden={link?.phase !== "linked"}
+                role="img"
+                aria-label={`${title} screen, linked with ${link?.friend.name ?? "a friend"}`}
+              />
+              {link && link.phase !== "linked" && (
+                <div className="lcd-overlay" role="status">
+                  <span className="px">
+                    {link.phase === "plugging" ? "PLUGGING IN…" : link.phase === "unplugging" ? "UNPLUGGING…" : `WAITING FOR ${link.friend.name.toUpperCase()}`}
+                  </span>
+                  {link.phase === "waiting" && (
+                    <>
+                      <small>Ask {link.friend.name} to plug in with you: Link cable, then your name.</small>
+                      <button type="button" className="btn small" onClick={() => void unplugLink()}>
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {paused && !link && !error && !flash && (
                 <button type="button" className="lcd-overlay" onClick={togglePause}>
                   <span className="px">PAUSED</span>
                   <small className="px">PRESS TO RESUME</small>
@@ -494,7 +686,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       </div>
 
       <TouchControls
-        emulator={emulator}
+        emulator={playing}
         platform={session.rom.platform}
         haptics={prefs.haptics}
         hidden={prefs.hideTouchWithPad && padPlaying}
@@ -544,6 +736,20 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           >
             <Icon name="clock" />
           </button>
+          {canLink && (
+            <button
+              type="button"
+              className={`ibtn tip${link ? " on" : ""}`}
+              data-tip={link?.phase === "linked" ? "Unplug" : "Link cable"}
+              aria-label={link?.phase === "linked" ? `Unplug the link cable from ${link.friend.name}` : "Link cable"}
+              aria-pressed={link !== null}
+              aria-haspopup={link ? undefined : "dialog"}
+              disabled={link?.phase === "plugging" || link?.phase === "unplugging"}
+              onClick={() => (link ? void unplugLink() : setPanel("link"))}
+            >
+              <Icon name="link" />
+            </button>
+          )}
           <button type="button" className="ibtn tip" data-tip="Controls" aria-label="Controls" onClick={() => setPanel("controls")}>
             <Icon name="gamepad" size={22} />
           </button>
@@ -560,6 +766,15 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           <ResetConfirm title={title} onCancel={() => setConfirmReset(false)} onReset={doReset} className="popover" />
         )}
       </div>
+
+      {linkNote && (
+        <p className="link-note" role="status">
+          {linkNote}{" "}
+          <button type="button" className="link on-dark" onClick={() => setLinkNote(null)}>
+            OK
+          </button>
+        </p>
+      )}
 
       <KeysHint platform={session.rom.platform} bindings={bindings} onEdit={() => setPanel("controls")} />
 
@@ -616,6 +831,16 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   >
                     <Icon name="clock" size={22} /> Previous saves
                   </button>
+                  {canLink && (
+                    <button
+                      type="button"
+                      className="tile"
+                      disabled={link?.phase === "plugging" || link?.phase === "unplugging"}
+                      onClick={() => (setMenu(false), link ? void unplugLink() : setPanel("link"))}
+                    >
+                      <Icon name="link" size={22} /> {link?.phase === "linked" ? "Unplug" : link ? "Stop waiting" : "Link cable"}
+                    </button>
+                  )}
                   <button type="button" className="tile" onClick={() => (setMenu(false), setPanel("controls"))}>
                     <Icon name="gamepad" size={24} /> Controls
                   </button>
@@ -670,6 +895,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       )}
 
       {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} onClose={() => setPanel(null)} />}
+
+      {panel === "link" && <LinkPanel romHash={session.rom.romHash} onPlug={(friend) => void plug(friend)} onClose={() => setPanel(null)} />}
 
       {panel === "account" && (
         <CloudPanel

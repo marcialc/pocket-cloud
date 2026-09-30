@@ -174,7 +174,7 @@ export async function recordSaveScores(
   }
 }
 
-function socialStub(env: Env) {
+export function socialStub(env: Env) {
   return env.SOCIAL.getByName("social");
 }
 

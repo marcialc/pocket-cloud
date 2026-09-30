@@ -25,6 +25,7 @@ import { clearSessionCookie } from "./auth/session";
 import type { PlayerSaveDO, StoredVersion } from "./durable-objects/PlayerSaveDO";
 import { isCrossSite, json, methodNotAllowed, readLimited } from "./http";
 import { authenticate } from "./identity";
+import { handleLink } from "./link";
 import { handleRoms } from "./roms";
 import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
 
@@ -47,6 +48,7 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
+ *   /api/link/*                    GBA link play with a friend (email sign-in only), see link.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *   GET    /api/covers/*           game box art (no sign-in), see covers.ts
  *
@@ -78,11 +80,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
   const settings = path === "/api/settings";
   const social = path.startsWith("/api/social/");
+  const link = path.startsWith("/api/link/");
   if (social) {
     const preview = await handleInvitePreview(request, env, path);
     if (preview) return preview;
   }
-  if (!roms && !settings && !social && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  if (!roms && !settings && !social && !link && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
 
   const identity = await authenticate(request, env);
   if ("error" in identity) {
@@ -109,6 +112,11 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     // Friends know each other by account; an anonymous key has no profile.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
     return handleSocial(request, env, url, identity.playerId);
+  }
+  if (link) {
+    // Linking is between friends, who know each other by account.
+    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
+    return handleLink(request, env, url, identity.playerId);
   }
 
   if (path === "/api/saves") {
