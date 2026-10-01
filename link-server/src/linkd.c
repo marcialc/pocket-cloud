@@ -322,6 +322,18 @@ static void onReset(struct mCoreThread* thread) {
 	loadSnapshot(player, thread->core);
 	thread->core->setPeripheral(thread->core, mPERIPH_GBA_LINK_PORT, &player->driver.d);
 	player->driver.d.reset(&player->driver.d);
+	/* The other GBA learns this one's link mode only when it changes, and
+	 * a game snapshotted in multiplayer mode never changes it again: say it
+	 * now, or the other side never sees everyone ready and the game finds no
+	 * cable. */
+	struct GBASIO* sio = &((struct GBA*) thread->core->board)->sio;
+	enum GBASIOMode mode = sio->mode;
+	player->driver.d.setMode(&player->driver.d, (enum GBASIOMode) -1);
+	player->driver.d.setMode(&player->driver.d, mode);
+	/* And the SI line, as switching into multiplayer mode sets it. */
+	if (mode == GBA_SIO_MULTI) {
+		sio->rcnt = GBASIORegisterRCNTSetSi(sio->rcnt, player->driver.d.deviceId(&player->driver.d) != 0);
+	}
 	atomic_store(&player->pluggedIn, true);
 }
 
