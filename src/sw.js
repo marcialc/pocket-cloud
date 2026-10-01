@@ -14,7 +14,6 @@ const PRECACHE = /** @type {string[]} */ (__PRECACHE__);
 
 const APP_CACHE = `app-${VERSION}`;
 const COVERS_CACHE = "covers";
-const FONTS_CACHE = "fonts";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(APP_CACHE).then((cache) => cache.addAll(PRECACHE)));
@@ -24,7 +23,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("app-") && k !== APP_CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => (k.startsWith("app-") && k !== APP_CACHE) || k === "fonts").map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -34,10 +33,6 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
 
-  if (url.origin === "https://fonts.googleapis.com" || url.origin === "https://fonts.gstatic.com") {
-    event.respondWith(staleWhileRevalidate(request, FONTS_CACHE));
-    return;
-  }
   if (url.origin !== location.origin) return;
 
   if (url.pathname.startsWith("/api/covers/")) {
@@ -66,18 +61,4 @@ async function cacheFirst(request, cacheName) {
   const res = await fetch(request);
   if (res.ok) await cache.put(request, res.clone());
   return res;
-}
-
-async function staleWhileRevalidate(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
-  const fresh = fetch(request).then((res) => {
-    if (res.ok || res.type === "opaque") void cache.put(request, res.clone());
-    return res;
-  });
-  if (cached) {
-    fresh.catch(() => {});
-    return cached;
-  }
-  return fresh;
 }

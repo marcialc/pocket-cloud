@@ -1,0 +1,125 @@
+<!doctype html>
+<!--
+  Static content page (served extensionless, like /licenses). Shared style block
+  and nav are copied into each page; keep them in step across public/*.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Privacy: what Pocket Cloud stores about you</title>
+    <meta name="description" content="What data Pocket Cloud stores: ROMs are read on your device and uploaded only if you opt in; saves are backed up by default, and signing in adds account data." />
+    <link rel="canonical" href="https://pocketcloud.app/privacy" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#16131c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="Privacy: what Pocket Cloud stores about you" />
+    <meta property="og:description" content="What data Pocket Cloud stores: ROMs are read on your device and uploaded only if you opt in; saves are backed up by default, and signing in adds account data." />
+    <meta property="og:url" content="https://pocketcloud.app/privacy" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Privacy: what Pocket Cloud stores about you" />
+    <meta name="twitter:description" content="What data Pocket Cloud stores: ROMs are read on your device and uploaded only if you opt in; saves are backed up by default, and signing in adds account data." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+      h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.3; }
+      p, ul, ol, dl { margin: 0; }
+      .lede { font-size: 17px; line-height: 1.5; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section p + p, section p + ul, section ul + p, section p + ol { margin-top: 10px; }
+      section ul, section ol { padding-left: 20px; color: var(--ink-2); }
+      section li + li { margin-top: 4px; }
+      section p { color: var(--ink-2); }
+      code, kbd { font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--shell-press); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink-2); }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--shell-press); vertical-align: top; }
+      th { color: var(--ink); }
+      .cta { display: inline-block; align-self: flex-start; padding: 10px 18px; border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; }
+      nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      nav { font-size: 14px; }
+      footer { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(239, 233, 245, 0.15); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>Privacy: what Pocket Cloud stores</h1>
+      <p class="lede">Pocket Cloud reads your ROM files on your device and uploads one only if you opt in to keeping games in your account (needed for link play). By default only save data is backed up. This page lists what is stored and where.</p>
+      <section>
+        <h2>On your device</h2>
+        <ul>
+          <li>ROM files you choose to remember, kept in your browser's storage so you only pick a game once. You can remove a game from there at any time.</li>
+          <li>Your saves, your controls and other preferences, and the app itself for offline play.</li>
+          <li>Clearing your browser's site data removes these. Saves that were backed up to an account survive.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>If you continue without signing in</h2>
+        <ul>
+          <li>Your saves are kept in that browser.</li>
+          <li><strong>Anonymous player key:</strong> with cloud backup on (the default), saves are also backed up under a random key generated and stored in that browser. It is not tied to your email or name, and it stops working as an identity if you clear the browser's site data. Signing in ties your saves to your email so they follow you across devices.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>If you sign in with email</h2>
+        <ul>
+          <li><strong>Email and sign-in:</strong> we send you a one-time code from login@pocketcloud.app using Cloudflare Email Service; only a hash of your email address is kept. The server keeps only a hash of the pending code, which expires after 10 minutes, and the account record is keyed by a hash of your email address. Your signed-in session is a cookie that is HttpOnly, Secure and lasts 30 days, and you can sign out everywhere.</li>
+          <li><strong>Saves:</strong> your game saves (battery memory), the game's title, play time, a few earlier versions of each save with a small screenshot of the game, and account settings such as your key bindings.</li>
+          <li><strong>Games, only if you opt in:</strong> ROM files you choose to keep in your account are stored privately for you and are not shared with other accounts. Nothing is uploaded until you say yes.</li>
+          <li><strong>Cover images:</strong> cover images you pick for your games are kept in your account.</li>
+          <li><strong>Friends and leaderboards:</strong> if you use them, a display name you choose, a friend code, your friend list, and best scores for supported games.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Link cable play</h2>
+        <p>To link, each player's game is loaded from their own copy in their account, together with the save they plug in with, onto a link server that runs both games. Each player's ROM is used only for their own side of the link, and saves are returned when the link ends.</p>
+      </section>
+      <section>
+        <h2>Box art</h2>
+        <p>Game box art is fetched by Pocket Cloud's server from the public libretro thumbnails service, so your browser does not contact that service directly. The request includes the game's name.</p>
+      </section>
+      <section>
+        <h2>Questions</h2>
+        <p>See <a href="/how-it-works">How Pocket Cloud works</a> and the <a href="/faq">FAQ</a>, or <a href="/licenses">Open-source licenses</a> for the software used.</p>
+      </section>
+
+      <a class="cta" href="/">Start playing →</a>
+      <footer>
+        <nav aria-label="Pocket Cloud pages">
+          <ul>
+          <li><a href="/faq">FAQ</a></li>
+          <li><a href="/how-it-works">How Pocket Cloud works</a></li>
+          <li><a href="/link-play">Link cable play</a></li>
+          <li><a href="/controls">Controls</a></li>
+          <li><a href="/game-boy">Game Boy emulator</a></li>
+          <li><a href="/game-boy-color">Game Boy Color emulator</a></li>
+          <li><a href="/game-boy-advance">Game Boy Advance emulator</a></li>
+          <li><a href="/privacy" aria-current="page">Privacy</a></li>
+          <li><a href="/licenses">Open-source licenses</a></li>
+          </ul>
+        </nav>
+        <p class="dim">Game Boy, Game Boy Color and Game Boy Advance are trademarks of Nintendo. Pocket Cloud is not affiliated with or endorsed by Nintendo and ships no games.</p>
+      </footer>
+    </main>
+  </body>
+</html>

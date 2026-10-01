@@ -1,0 +1,116 @@
+<!doctype html>
+<!--
+  Static content page (served extensionless, like /licenses). Shared style block
+  and nav are copied into each page; keep them in step across public/*.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>How Pocket Cloud works: cloud saves &amp; offline play</title>
+    <meta name="description" content="How Pocket Cloud runs Game Boy games in your browser, reads your ROM on your device, backs up saves to the cloud and plays offline." />
+    <link rel="canonical" href="https://pocketcloud.app/how-it-works" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#16131c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="How Pocket Cloud works: cloud saves &amp; offline play" />
+    <meta property="og:description" content="How Pocket Cloud runs Game Boy games in your browser, reads your ROM on your device, backs up saves to the cloud and plays offline." />
+    <meta property="og:url" content="https://pocketcloud.app/how-it-works" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="How Pocket Cloud works: cloud saves &amp; offline play" />
+    <meta name="twitter:description" content="How Pocket Cloud runs Game Boy games in your browser, reads your ROM on your device, backs up saves to the cloud and plays offline." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+      h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.3; }
+      p, ul, ol, dl { margin: 0; }
+      .lede { font-size: 17px; line-height: 1.5; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section p + p, section p + ul, section ul + p, section p + ol { margin-top: 10px; }
+      section ul, section ol { padding-left: 20px; color: var(--ink-2); }
+      section li + li { margin-top: 4px; }
+      section p { color: var(--ink-2); }
+      code, kbd { font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--shell-press); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink-2); }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--shell-press); vertical-align: top; }
+      th { color: var(--ink); }
+      .cta { display: inline-block; align-self: flex-start; padding: 10px 18px; border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; }
+      nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      nav { font-size: 14px; }
+      footer { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(239, 233, 245, 0.15); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>How Pocket Cloud works</h1>
+      <p class="lede">Pocket Cloud runs the emulator inside your browser and reads your ROM on your device. The ROM is uploaded only if you opt in to keeping games in your account (needed for link play); by default only save data is backed up.</p>
+      <section>
+        <h2>The emulator runs on your device</h2>
+        <p>The emulators are WebAssembly programs that run in the page, so the game is computed on your own device rather than streamed from a server. Game Boy and Game Boy Color games use binjgb, and Game Boy Advance games use mGBA. See the <a href="/game-boy">Game Boy</a>, <a href="/game-boy-color">Game Boy Color</a> and <a href="/game-boy-advance">Game Boy Advance</a> pages.</p>
+      </section>
+      <section>
+        <h2>Your ROM stays on your device unless you choose otherwise</h2>
+        <p>You pick a ROM file you already have. Pocket Cloud reads it in your browser and works out a fingerprint of it (a SHA-256 hash) locally. By default it does not upload the file anywhere.</p>
+        <p>The app can remember games in your browser's storage so you only pick a file once. If you sign in, you can optionally choose to keep your games in your account so they show up on every device; nothing is uploaded until you say yes. Online link play also needs the game in your account, as described in <a href="/link-play">Link cable play</a>.</p>
+      </section>
+      <section>
+        <h2>Saves: local first, then the cloud</h2>
+        <ol>
+          <li>When the game saves to its battery memory, Pocket Cloud stores that save in your browser.</li>
+          <li>With cloud backup on (the default), the save is uploaded a few seconds later, and again when you leave or hide the tab: to your account if you are signed in, or under a random anonymous key stored in that browser if you are not.</li>
+          <li>On another device, sign in with the same email and open the same game; the save is fetched and you continue from it.</li>
+        </ol>
+        <p>If two devices have different saves, Pocket Cloud does not silently overwrite one: when it cannot tell which is the right one, it asks you to choose. It also keeps a few earlier versions of each save, so you can go back to one.</p>
+        <p>Signing in is by email: you receive a one-time code and there is no password. Without signing in, saves are kept in the browser and, with cloud backup on (the default), also backed up under a random anonymous key stored in that browser; signing in ties them to your email so they follow you across devices.</p>
+      </section>
+      <section>
+        <h2>Offline play</h2>
+        <p>After one visit online, Pocket Cloud keeps the app and emulators on your device through a service worker, so it opens and plays games stored on that device without a network. Saves made offline are kept locally and sync once you reconnect. You can also install it as an app from a supporting browser. Signing in, cloud sync and link play need a connection.</p>
+      </section>
+      <section>
+        <h2>What you need</h2>
+        <ul><li>A modern browser with WebAssembly support.</li><li>Your own ROM files. Pocket Cloud includes no games.</li><li>Optional: an email address, so saves follow you across devices, and for link play.</li></ul>
+        <p>Questions? Read the <a href="/faq">FAQ</a> or the <a href="/privacy">privacy details</a>.</p>
+      </section>
+
+      <a class="cta" href="/">Start playing →</a>
+      <footer>
+        <nav aria-label="Pocket Cloud pages">
+          <ul>
+          <li><a href="/faq">FAQ</a></li>
+          <li><a href="/how-it-works" aria-current="page">How Pocket Cloud works</a></li>
+          <li><a href="/link-play">Link cable play</a></li>
+          <li><a href="/controls">Controls</a></li>
+          <li><a href="/game-boy">Game Boy emulator</a></li>
+          <li><a href="/game-boy-color">Game Boy Color emulator</a></li>
+          <li><a href="/game-boy-advance">Game Boy Advance emulator</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/licenses">Open-source licenses</a></li>
+          </ul>
+        </nav>
+        <p class="dim">Game Boy, Game Boy Color and Game Boy Advance are trademarks of Nintendo. Pocket Cloud is not affiliated with or endorsed by Nintendo and ships no games.</p>
+      </footer>
+    </main>
+  </body>
+</html>

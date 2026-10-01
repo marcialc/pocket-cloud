@@ -16,8 +16,10 @@
 	],
 	"assets": {
 		// The React app (built by Vite) is served as static assets. Only /api/*
-		// reaches the Worker; everything else falls back to index.html.
-		"not_found_handling": "single-page-application",
+		// reaches the Worker. Unknown paths get a real 404 (public/404.html) so
+		// search engines don't index them; the app has no path routing (invite
+		// links are /?invite=...), so nothing needs an index.html fallback.
+		"not_found_handling": "404-page",
 		"run_worker_first": [
 			"/api/*"
 		]

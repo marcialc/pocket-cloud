@@ -63,13 +63,25 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     try {
-      return await route(request, env, url, ctx);
+      return withRobotsTag(url, await route(request, env, url, ctx));
     } catch (err) {
       console.error(JSON.stringify({ message: "unhandled error", path: url.pathname, error: String(err) }));
-      return json({ error: "internal_error" }, 500);
+      return withRobotsTag(url, json({ error: "internal_error" }, 500));
     }
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Keep API responses, and anything served from the *.workers.dev host (preview
+ * and default URLs), out of search indexes. Static assets on workers.dev get the
+ * same header from public/_headers.
+ */
+function withRobotsTag(url: URL, response: Response): Response {
+  if (!url.pathname.startsWith("/api/") && !url.hostname.endsWith(".workers.dev")) return response;
+  const out = new Response(response.body, response);
+  out.headers.set("X-Robots-Tag", "noindex");
+  return out;
+}
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;

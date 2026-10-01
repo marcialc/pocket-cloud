@@ -21,3 +21,9 @@ production.** Treat a push to `main` as a deploy.
 - The cloud ROM library needs the `pocket-cloud-roms` R2 bucket
   (`pnpm wrangler r2 bucket create pocket-cloud-roms`, once); deploys fail
   while it doesn't exist. Local dev and tests simulate it.
+
+## Content pages
+
+The static SEO pages in `public/*.html` (faq, how-it-works, link-play,
+controls, game-boy, game-boy-color, game-boy-advance, privacy) describe app
+features; update them in the same change when those features change.

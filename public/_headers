@@ -3,3 +3,7 @@
   Content-Type: text/plain; charset=utf-8
 /vendor/retroarch/licenses/*
   Content-Type: text/plain; charset=utf-8
+
+# Previews and the default workers.dev URL must not compete with pocketcloud.app in search.
+https://:name.:account.workers.dev/*
+  X-Robots-Tag: noindex

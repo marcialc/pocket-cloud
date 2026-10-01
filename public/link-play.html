@@ -1,0 +1,115 @@
+<!doctype html>
+<!--
+  Static content page (served extensionless, like /licenses). Shared style block
+  and nav are copied into each page; keep them in step across public/*.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Game Boy Advance link cable online: trade &amp; battle</title>
+    <meta name="description" content="Trade and battle with a friend over an emulated Game Boy Advance link cable in your browser. What you need, how to plug in, and what happens to your saves." />
+    <link rel="canonical" href="https://pocketcloud.app/link-play" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#16131c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="Game Boy Advance link cable online: trade &amp; battle" />
+    <meta property="og:description" content="Trade and battle with a friend over an emulated Game Boy Advance link cable in your browser. What you need, how to plug in, and what happens to your saves." />
+    <meta property="og:url" content="https://pocketcloud.app/link-play" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Game Boy Advance link cable online: trade &amp; battle" />
+    <meta name="twitter:description" content="Trade and battle with a friend over an emulated Game Boy Advance link cable in your browser. What you need, how to plug in, and what happens to your saves." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+      h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.3; }
+      p, ul, ol, dl { margin: 0; }
+      .lede { font-size: 17px; line-height: 1.5; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section p + p, section p + ul, section ul + p, section p + ol { margin-top: 10px; }
+      section ul, section ol { padding-left: 20px; color: var(--ink-2); }
+      section li + li { margin-top: 4px; }
+      section p { color: var(--ink-2); }
+      code, kbd { font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--shell-press); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink-2); }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--shell-press); vertical-align: top; }
+      th { color: var(--ink); }
+      .cta { display: inline-block; align-self: flex-start; padding: 10px 18px; border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; }
+      nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      nav { font-size: 14px; }
+      footer { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(239, 233, 245, 0.15); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>Game Boy Advance link cable play online</h1>
+      <p class="lede">Pocket Cloud's link cable lets two signed-in friends link their Game Boy Advance games online to trade and battle, like two consoles joined by a cable.</p>
+      <section>
+        <h2>What you need</h2>
+        <ul>
+          <li>Both players signed in with an email account (see <a href="/how-it-works">how sign-in works</a>).</li>
+          <li>Each other added as friends in the app's Friends panel.</li>
+          <li>A Game Boy Advance game open, and that game kept in your account's game library. Each player's link uses their own copy; no ROM is sent to the other player.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>How it works</h2>
+        <ol>
+          <li>In your game, go to the link room (in Pokémon games, upstairs in the Pokémon Center) and save.</li>
+          <li>Open the Link cable button, pick your friend and choose Plug in.</li>
+          <li>When your friend plugs in with you, the two games are linked. While linked, both games run together on a link server, and each player sees and controls their own screen.</li>
+          <li>Unplug (either player, or it times out if nobody is watching) and your save from the link comes back to your local game and your account.</li>
+        </ol>
+      </section>
+      <section>
+        <h2>Good to know</h2>
+        <ul>
+          <li>Link play is for Game Boy Advance games only. Game Boy and Game Boy Color games are not linked.</li>
+          <li>The game pauses locally while you are plugged in, because it is running on the link server instead.</li>
+          <li>Link play runs on a link server and needs an internet connection; it does not work offline.</li>
+          <li>If a link fails, plugging in again starts over.</li>
+        </ul>
+        <p>Not signed in yet? <a href="/">Open Pocket Cloud</a>. Controls are covered on the <a href="/controls">Controls page</a> and GBA details on the <a href="/game-boy-advance">Game Boy Advance page</a>.</p>
+      </section>
+
+      <a class="cta" href="/">Start playing →</a>
+      <footer>
+        <nav aria-label="Pocket Cloud pages">
+          <ul>
+          <li><a href="/faq">FAQ</a></li>
+          <li><a href="/how-it-works">How Pocket Cloud works</a></li>
+          <li><a href="/link-play" aria-current="page">Link cable play</a></li>
+          <li><a href="/controls">Controls</a></li>
+          <li><a href="/game-boy">Game Boy emulator</a></li>
+          <li><a href="/game-boy-color">Game Boy Color emulator</a></li>
+          <li><a href="/game-boy-advance">Game Boy Advance emulator</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/licenses">Open-source licenses</a></li>
+          </ul>
+        </nav>
+        <p class="dim">Game Boy, Game Boy Color and Game Boy Advance are trademarks of Nintendo. Pocket Cloud is not affiliated with or endorsed by Nintendo and ships no games.</p>
+      </footer>
+    </main>
+  </body>
+</html>

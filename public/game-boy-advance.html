@@ -1,0 +1,112 @@
+<!doctype html>
+<!--
+  Static content page (served extensionless, like /licenses). Shared style block
+  and nav are copied into each page; keep them in step across public/*.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Game Boy Advance emulator online: play GBA in browser</title>
+    <meta name="description" content="Play Game Boy Advance games in your browser with Pocket Cloud: mGBA core, cloud saves, controller and touch support, and online link cable play with friends." />
+    <link rel="canonical" href="https://pocketcloud.app/game-boy-advance" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#16131c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="Game Boy Advance emulator online: play GBA in browser" />
+    <meta property="og:description" content="Play Game Boy Advance games in your browser with Pocket Cloud: mGBA core, cloud saves, controller and touch support, and online link cable play with friends." />
+    <meta property="og:url" content="https://pocketcloud.app/game-boy-advance" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Game Boy Advance emulator online: play GBA in browser" />
+    <meta name="twitter:description" content="Play Game Boy Advance games in your browser with Pocket Cloud: mGBA core, cloud saves, controller and touch support, and online link cable play with friends." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+      h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.3; }
+      p, ul, ol, dl { margin: 0; }
+      .lede { font-size: 17px; line-height: 1.5; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section p + p, section p + ul, section ul + p, section p + ol { margin-top: 10px; }
+      section ul, section ol { padding-left: 20px; color: var(--ink-2); }
+      section li + li { margin-top: 4px; }
+      section p { color: var(--ink-2); }
+      code, kbd { font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--shell-press); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink-2); }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--shell-press); vertical-align: top; }
+      th { color: var(--ink); }
+      .cta { display: inline-block; align-self: flex-start; padding: 10px 18px; border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; }
+      nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      nav { font-size: 14px; }
+      footer { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(239, 233, 245, 0.15); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>Game Boy Advance emulator in your browser</h1>
+      <p class="lede">Pocket Cloud plays Game Boy Advance games in any modern browser using the mGBA emulator core, with cloud saves and online link cable play between friends.</p>
+      <section>
+        <h2>Supported files and emulator</h2>
+        <ul>
+          <li>ROM files you provide, with the <code>.gba</code> extension. Pocket Cloud also recognizes a Game Boy Advance ROM by its header.</li>
+          <li>Emulator: the <a href="https://github.com/libretro/mgba">mGBA</a> libretro core (MPL-2.0) inside RetroArch, loaded with <a href="https://github.com/arianrhodsandlot/nostalgist">Nostalgist.js</a>, all running in your browser as WebAssembly. See <a href="/licenses">Open-source licenses</a>.</li>
+          <li>Screen: 240 × 160 pixels, scaled up to fit your display.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Buttons</h2>
+        <p>A, B, L, R, Start, Select and the D-pad, with default keys <kbd>Z</kbd>, <kbd>X</kbd>, <kbd>A</kbd> (L), <kbd>S</kbd> (R), <kbd>Enter</kbd> and <kbd>Shift</kbd>. Keyboard, controller and touch are supported and remappable. See <a href="/controls">Controls</a>.</p>
+      </section>
+      <section>
+        <h2>Saves</h2>
+        <p>Game saves are stored in your browser and, when you sign in, backed up to your account. See <a href="/how-it-works">How Pocket Cloud works</a>.</p>
+      </section>
+      <section>
+        <h2>Link cable play</h2>
+        <p>Signed-in players can link two Game Boy Advance games online with a friend to trade and battle. See <a href="/link-play">Link cable play</a>.</p>
+      </section>
+      <section>
+        <h2>Other systems</h2>
+        <p>Also supported: <a href="/game-boy">Game Boy</a> and <a href="/game-boy-color">Game Boy Color</a>. Pocket Cloud ships no games; you bring your own ROM files. See the <a href="/faq">FAQ</a>.</p>
+      </section>
+
+      <a class="cta" href="/">Start playing →</a>
+      <footer>
+        <nav aria-label="Pocket Cloud pages">
+          <ul>
+          <li><a href="/faq">FAQ</a></li>
+          <li><a href="/how-it-works">How Pocket Cloud works</a></li>
+          <li><a href="/link-play">Link cable play</a></li>
+          <li><a href="/controls">Controls</a></li>
+          <li><a href="/game-boy">Game Boy emulator</a></li>
+          <li><a href="/game-boy-color">Game Boy Color emulator</a></li>
+          <li><a href="/game-boy-advance" aria-current="page">Game Boy Advance emulator</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/licenses">Open-source licenses</a></li>
+          </ul>
+        </nav>
+        <p class="dim">Game Boy, Game Boy Color and Game Boy Advance are trademarks of Nintendo. Pocket Cloud is not affiliated with or endorsed by Nintendo and ships no games.</p>
+      </footer>
+    </main>
+  </body>
+</html>

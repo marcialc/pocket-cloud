@@ -271,3 +271,17 @@ describe("save screenshots", () => {
     expect((await history(key)).current).not.toHaveProperty("screenshot");
   });
 });
+
+describe("X-Robots-Tag", () => {
+  it("marks /api responses noindex", async () => {
+    expect((await SELF.fetch(`${API}/health`)).headers.get("X-Robots-Tag")).toBe("noindex");
+    expect((await SELF.fetch(`${API}/nope`)).headers.get("X-Robots-Tag")).toBe("noindex");
+  });
+
+  it("marks anything on a workers.dev host noindex, and leaves the custom domain alone", async () => {
+    const preview = await SELF.fetch("https://x-pocket-cloud.acct.workers.dev/api/health");
+    expect(preview.headers.get("X-Robots-Tag")).toBe("noindex");
+    const other = await SELF.fetch("https://example.com/api/health");
+    expect(other.headers.get("X-Robots-Tag")).toBe("noindex");
+  });
+});
