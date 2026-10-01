@@ -597,6 +597,22 @@ export function RomPicker({
         )}
         <span>
           Bring your own legally dumped cartridge.{" · "}
+          <a className="link on-dark" href="/faq" target="_blank" rel="noopener">
+            FAQ
+          </a>
+          {" · "}
+          <a className="link on-dark" href="/how-it-works" target="_blank" rel="noopener">
+            How Pocket Cloud works
+          </a>
+          {" · "}
+          <a className="link on-dark" href="/link-play" target="_blank" rel="noopener">
+            Link cable play
+          </a>
+          {" · "}
+          <a className="link on-dark" href="/controls" target="_blank" rel="noopener">
+            Controls guide
+          </a>
+          {" · "}
           <a className="link on-dark" href="/licenses" target="_blank" rel="noopener">
             Open-source licenses
           </a>

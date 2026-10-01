@@ -1,0 +1,186 @@
+<!doctype html>
+<!--
+  Static content page (served extensionless, like /licenses). Shared style block
+  and nav are copied into each page; keep them in step across public/*.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Pocket Cloud FAQ: GBA in browser, saves, legal</title>
+    <meta name="description" content="Answers about playing Game Boy, Game Boy Color and Game Boy Advance games in your browser: cloud saves, legality, iPhone, offline and link cable play." />
+    <link rel="canonical" href="https://pocketcloud.app/faq" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#16131c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="Pocket Cloud FAQ: GBA in browser, saves, legal" />
+    <meta property="og:description" content="Answers about playing Game Boy, Game Boy Color and Game Boy Advance games in your browser: cloud saves, legality, iPhone, offline and link cable play." />
+    <meta property="og:url" content="https://pocketcloud.app/faq" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Pocket Cloud FAQ: GBA in browser, saves, legal" />
+    <meta name="twitter:description" content="Answers about playing Game Boy, Game Boy Color and Game Boy Advance games in your browser: cloud saves, legality, iPhone, offline and link cable play." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Can I play Game Boy Advance games in my browser?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Pocket Cloud runs Game Boy, Game Boy Color and Game Boy Advance games in a web browser, with no install and no plugin. You open a ROM file you already have and play it with a keyboard, a game controller or on-screen touch buttons. See the Game Boy Advance page for details."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do saves sync across devices?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, if you sign in with your email. Signed-in saves back up to your account and follow you to any browser you sign in on; there is no password, just a one-time code we email you. Without signing in, saves are kept in your browser and, with cloud backup on (the default), also backed up under a random anonymous key stored in that browser; signing in ties them to your email so they follow you across devices. Games themselves do not sync unless you choose to keep them in your account. How Pocket Cloud works explains the details, including what happens when two devices disagree."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is Pocket Cloud legal?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Pocket Cloud is an emulator. It ships no games and includes no ROMs or game files, and it does not provide or link to any. You choose the files you load, and the emulators run them in your browser. The ROM is read on your device and stays there unless you choose to keep it in your account. This describes how the app works and is not legal advice; what is lawful depends on where you live, so check the rules that apply to you. More in Privacy."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it work on iPhone and Android?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Pocket Cloud is a web app with on-screen touch controls for phones and tablets, and it can be installed to the home screen or dock in browsers that support installing web apps. It needs a modern browser with WebAssembly. Touch buttons are shown on touch screens, and by default they step aside while you play with a connected controller; you can change that in Account settings. See Controls."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need to download or install anything?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Pocket Cloud runs in the browser tab, and the emulators load as part of the page. Installing it as an app is optional and lets it open from your home screen or dock."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What are link cables and link play?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "On a real Game Boy Advance, a link cable joins two consoles so players can trade and battle. Pocket Cloud's link cable feature does this online between two friends who are both signed in and have added each other: you both plug in, and your two Game Boy Advance games run linked together. It works for Game Boy Advance games only. Link cable play has the steps and requirements."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I play offline?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, after you have opened Pocket Cloud once while online. The app, emulators and box art you have seen are kept on your device, so it opens and plays games that are stored on that device without a network. Saves are kept locally and uploaded once you are back online. Sign-in, cloud sync, and link play need a connection."
+      }
+    }
+  ]
+}
+    </script>
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --shell-press: #c8c2b4; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --on-bg-2: #b3a9bf; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+      h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.3; }
+      p, ul, ol, dl { margin: 0; }
+      .lede { font-size: 17px; line-height: 1.5; }
+      .dim { color: var(--on-bg-2); font-size: 14px; }
+      a { color: inherit; font-weight: 600; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; }
+      section a { color: var(--accent-2); }
+      section p + p, section p + ul, section ul + p, section p + ol { margin-top: 10px; }
+      section ul, section ol { padding-left: 20px; color: var(--ink-2); }
+      section li + li { margin-top: 4px; }
+      section p { color: var(--ink-2); }
+      code, kbd { font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--shell-press); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink-2); }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--shell-press); vertical-align: top; }
+      th { color: var(--ink); }
+      .cta { display: inline-block; align-self: flex-start; padding: 10px 18px; border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; }
+      nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      nav { font-size: 14px; }
+      footer { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(239, 233, 245, 0.15); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="dim"><a href="/">← Pocket Cloud</a></p>
+      <h1>Pocket Cloud FAQ</h1>
+      <p class="lede">Pocket Cloud is a browser-based emulator for Game Boy, Game Boy Color and Game Boy Advance games, with cloud saves and online link cable play. Here are short answers to the questions people ask most.</p>
+      <section>
+        <h2>Can I play Game Boy Advance games in my browser?</h2>
+        <p>Yes. Pocket Cloud runs Game Boy, Game Boy Color and Game Boy Advance games in a web browser, with no install and no plugin. You open a ROM file you already have and play it with a keyboard, a game controller or on-screen touch buttons. See the <a href="/game-boy-advance">Game Boy Advance page</a> for details.</p>
+      </section>
+
+      <section>
+        <h2>Do saves sync across devices?</h2>
+        <p>Yes, if you sign in with your email. Signed-in saves back up to your account and follow you to any browser you sign in on; there is no password, just a one-time code we email you. Without signing in, saves are kept in your browser and, with cloud backup on (the default), also backed up under a random anonymous key stored in that browser; signing in ties them to your email so they follow you across devices. Games themselves do not sync unless you choose to keep them in your account. <a href="/how-it-works">How Pocket Cloud works</a> explains the details, including what happens when two devices disagree.</p>
+      </section>
+
+      <section>
+        <h2>Is Pocket Cloud legal?</h2>
+        <p>Pocket Cloud is an emulator. It ships no games and includes no ROMs or game files, and it does not provide or link to any. You choose the files you load, and the emulators run them in your browser. The ROM is read on your device and stays there unless you choose to keep it in your account. This describes how the app works and is not legal advice; what is lawful depends on where you live, so check the rules that apply to you. More in <a href="/privacy">Privacy</a>.</p>
+      </section>
+
+      <section>
+        <h2>Does it work on iPhone and Android?</h2>
+        <p>Pocket Cloud is a web app with on-screen touch controls for phones and tablets, and it can be installed to the home screen or dock in browsers that support installing web apps. It needs a modern browser with WebAssembly. Touch buttons are shown on touch screens, and by default they step aside while you play with a connected controller; you can change that in Account settings. See <a href="/controls">Controls</a>.</p>
+      </section>
+
+      <section>
+        <h2>Do I need to download or install anything?</h2>
+        <p>No. Pocket Cloud runs in the browser tab, and the emulators load as part of the page. Installing it as an app is optional and lets it open from your home screen or dock.</p>
+      </section>
+
+      <section>
+        <h2>What are link cables and link play?</h2>
+        <p>On a real Game Boy Advance, a link cable joins two consoles so players can trade and battle. Pocket Cloud's link cable feature does this online between two friends who are both signed in and have added each other: you both plug in, and your two Game Boy Advance games run linked together. It works for Game Boy Advance games only. <a href="/link-play">Link cable play</a> has the steps and requirements.</p>
+      </section>
+
+      <section>
+        <h2>Can I play offline?</h2>
+        <p>Yes, after you have opened Pocket Cloud once while online. The app, emulators and box art you have seen are kept on your device, so it opens and plays games that are stored on that device without a network. Saves are kept locally and uploaded once you are back online. Sign-in, cloud sync, and link play need a connection.</p>
+      </section>
+
+      <a class="cta" href="/">Start playing →</a>
+      <footer>
+        <nav aria-label="Pocket Cloud pages">
+          <ul>
+          <li><a href="/faq" aria-current="page">FAQ</a></li>
+          <li><a href="/how-it-works">How Pocket Cloud works</a></li>
+          <li><a href="/link-play">Link cable play</a></li>
+          <li><a href="/controls">Controls</a></li>
+          <li><a href="/game-boy">Game Boy emulator</a></li>
+          <li><a href="/game-boy-color">Game Boy Color emulator</a></li>
+          <li><a href="/game-boy-advance">Game Boy Advance emulator</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/licenses">Open-source licenses</a></li>
+          </ul>
+        </nav>
+        <p class="dim">Game Boy, Game Boy Color and Game Boy Advance are trademarks of Nintendo. Pocket Cloud is not affiliated with or endorsed by Nintendo and ships no games.</p>
+      </footer>
+    </main>
+  </body>
+</html>

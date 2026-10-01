@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- Served with a real 404 status for unknown paths (assets.not_found_handling = "404-page"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>Page not found · Pocket Cloud</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --bg: #16131c; --paper: #f4eedc; --ink: #2a2530; --ink-2: #544d5c;
+        --on-bg: #efe9f5; --accent-2: #2a615c;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+        background-color: var(--bg);
+        background-image: radial-gradient(rgba(239, 233, 245, 0.07) 1px, transparent 1.5px);
+        background-size: 24px 24px;
+        color: var(--on-bg); font: 15px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      h1 { margin: 0; font-size: 23px; line-height: 1.25; }
+      p { margin: 0; }
+      section { background: var(--paper); color: var(--ink); border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+      section p { color: var(--ink-2); }
+      a.play { align-self: flex-start; background: var(--accent-2); color: #fff; font-weight: 600; text-decoration: none; padding: 10px 18px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Page not found</h1>
+      <section>
+        <p>There is nothing at this address. The page may have moved, or the link may be mistyped.</p>
+        <a class="play" href="/">Start playing</a>
+      </section>
+    </main>
+  </body>
+</html>

@@ -4,17 +4,80 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#16131c" />
-    <meta name="description" content="Play handheld classics you own in your browser. Saves back up to the cloud; the ROM never leaves your device." />
+    <meta name="description" content="Play Game Boy, Game Boy Color and GBA games in your browser. Bring your own ROMs, back up saves to the cloud, and link up with a friend. Free, no install." />
+    <link rel="canonical" href="https://pocketcloud.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pocket Cloud" />
+    <meta property="og:title" content="Play Game Boy &amp; GBA Games in Your Browser · Pocket Cloud" />
+    <meta property="og:description" content="Play Game Boy, Game Boy Color and GBA games in your browser. Bring your own ROMs, back up saves to the cloud, and link up with a friend." />
+    <meta property="og:url" content="https://pocketcloud.app/" />
+    <meta property="og:image" content="https://pocketcloud.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pocket Cloud: play Game Boy, Game Boy Color and GBA games in your browser" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Play Game Boy &amp; GBA Games in Your Browser · Pocket Cloud" />
+    <meta name="twitter:description" content="Play Game Boy, Game Boy Color and GBA games in your browser. Bring your own ROMs, back up saves to the cloud, and link up with a friend." />
+    <meta name="twitter:image" content="https://pocketcloud.app/og-image.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Pocket Cloud",
+        "url": "https://pocketcloud.app/",
+        "description": "Play Game Boy, Game Boy Color and Game Boy Advance games in your browser with your own ROMs, cloud-backed saves and link play.",
+        "applicationCategory": "GameApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires a modern browser with WebAssembly",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "Play Game Boy, Game Boy Color and Game Boy Advance games in the browser",
+          "Bring your own ROMs: no games are included or uploaded unless you choose to keep them in your account",
+          "Cloud backup of battery saves with restorable save history",
+          "Optional private cloud ROM library across your devices",
+          "GBA link play: trade and battle with a friend",
+          "Customizable keyboard and touch controls",
+          "Offline play once loaded"
+        ],
+        "sameAs": ["https://github.com/marcialc/pocket-cloud"]
+      }
+    </script>
+    <style>
+      /* Crawlable intro inside #root; React's createRoot replaces it on mount. */
+      .seo-intro { max-width: 640px; margin: 0 auto; padding: 48px 20px; color: #b3a9bf; font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .seo-intro h1 { margin: 0 0 12px; font-size: 22px; line-height: 1.3; color: #efe9f5; }
+      .seo-intro p, .seo-intro ul { margin: 0 0 12px; }
+      .seo-intro a { color: #efe9f5; }
+    </style>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <title>Pocket Cloud · Handheld classics in your browser</title>
+    <link rel="preload" href="/fonts/press-start-2p-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <title>Play Game Boy &amp; GBA Games in Your Browser · Pocket Cloud</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="seo-intro">
+        <h1>Play Game Boy, Game Boy Color and GBA games in your browser</h1>
+        <p>Pocket Cloud is a free web app that runs your own Game Boy, Game Boy Color and Game Boy Advance games right in the browser, on desktop and mobile. This page needs JavaScript to run the app.</p>
+        <ul>
+          <li>Bring your own ROMs: no games are included, and signed out your ROM never leaves your device.</li>
+          <li>Cloud saves: back up your battery saves and pick up on any device.</li>
+          <li>Link play: trade and battle with a friend on GBA games.</li>
+        </ul>
+        <p>
+          <a href="/how-it-works">How it works</a> ·
+          <a href="/faq">FAQ</a> ·
+          <a href="/link-play">Link play</a> ·
+          <a href="/controls">Controls</a> ·
+          <a href="/game-boy">Game Boy</a> ·
+          <a href="/game-boy-color">Game Boy Color</a> ·
+          <a href="/game-boy-advance">Game Boy Advance</a> ·
+          <a href="/privacy">Privacy</a>
+        </p>
+      </main>
+    </div>
     <script type="module" src="/src/client/main.tsx"></script>
   </body>
 </html>

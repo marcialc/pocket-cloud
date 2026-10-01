@@ -1,0 +1,30 @@
+# Pocket Cloud
+
+> Pocket Cloud is a free web app that plays Game Boy, Game Boy Color and Game Boy Advance games in your browser. You bring ROMs you own; saves back up to the cloud so you can continue on any device.
+
+## What it does
+
+- Runs GB, GBC and GBA games in the browser (WebAssembly emulation), on desktop and mobile.
+- Backs up battery saves to the cloud by default (under a random anonymous key stored in the browser, or to your account if you sign in with email), with save history you can restore.
+- Optionally keeps your own ROM library in your private account so games follow you across devices.
+- Link play: trade and battle with a friend over a virtual link cable on GBA games.
+- Custom keyboard and touch controls.
+
+## What it does not do
+
+- It ships no games and no ROMs. You load ROM files dumped from cartridges you own.
+- By default only save data is uploaded, never the ROM. A ROM is uploaded only if you choose to keep games in your account.
+
+## Pages
+
+- [Home](https://pocketcloud.app/): the app
+- [FAQ](https://pocketcloud.app/faq)
+- [How it works](https://pocketcloud.app/how-it-works)
+- [Link play](https://pocketcloud.app/link-play)
+- [Controls](https://pocketcloud.app/controls)
+- [Game Boy](https://pocketcloud.app/game-boy)
+- [Game Boy Color](https://pocketcloud.app/game-boy-color)
+- [Game Boy Advance](https://pocketcloud.app/game-boy-advance)
+- [Privacy](https://pocketcloud.app/privacy)
+
+Source: https://github.com/marcialc/pocket-cloud
