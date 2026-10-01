@@ -44,7 +44,8 @@ export function LinkPanel({ romHash, onPlug, onClose }: Props) {
           Like two GBAs on a cable: you both play your own game. Go to the link room in your game (in Pokémon, the
           Pokémon Center’s upstairs), then plug in with the same friend. While linked, both games run on the link server
           and carry on from where you were; unplug and your game carries on here from where the link left it, with your
-          save.
+          save. A game that asks you to connect the cable and turn the power on (like Four Swords): press Reset once
+          linked.
         </p>
       </div>
 

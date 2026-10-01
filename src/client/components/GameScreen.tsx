@@ -371,9 +371,14 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const doReset = () => {
     setConfirmReset(false);
     setMenu(false);
-    emulator?.reset();
-    shots.current?.clear();
-    if (paused) setRunning(true);
+    if (linkEmu) {
+      // Linked: powers the GBA on the link server off and on, the cable still in.
+      linkEmu.reset();
+    } else {
+      emulator?.reset();
+      shots.current?.clear();
+      if (paused) setRunning(true);
+    }
     setFlash("RESET");
     setAnnounce("Game reset");
     setTimeout(() => setFlash(null), 700);
@@ -609,7 +614,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const tools: { icon: IconName; label: string; onClick: () => void; pressed?: boolean; disabled?: boolean }[] = [
     { icon: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", onClick: togglePause, disabled: !emulator || !!link },
     { icon: "sync", label: "Sync now", onClick: () => void sync?.flush(), disabled: !sync || !prefs.cloudSync || !!link },
-    { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator || !!link },
+    { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator || (!!link && !linkEmu) },
   ];
 
   return (

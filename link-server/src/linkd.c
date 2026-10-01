@@ -53,6 +53,9 @@
  *        waitMax(u16) pingAvg(u16)           frames received and drawn, ms
  *        pingMax(u16) flags(u8)              from arrival to drawn, ping ms;
  *                                            flags 1 tab hidden, 2 touch
+ *   0x05                                     reset: power this GBA off and
+ *                                            on, the cable still in (games
+ *                                            that look for it at power-on)
  * Multi-byte numbers are little-endian.
  */
 
@@ -111,6 +114,7 @@ enum {
 	MSG_AUDIO = 0x03,
 	MSG_DRAWN = 0x03,
 	MSG_CLIENT_STATS = 0x04,
+	MSG_RESET = 0x05,
 };
 
 struct Player {
@@ -319,6 +323,11 @@ static void loadSnapshot(struct Player* player, struct mCore* core) {
  * reset: the order a GBA got at power-on when the cable went in first. */
 static void onReset(struct mCoreThread* thread) {
 	struct Player* player = thread->userData;
+	/* A reset while linked (MSG_RESET): powered on again from the save, with
+	 * the cable still in; resetting the GBA resets the cable too. */
+	if (atomic_load(&player->pluggedIn)) {
+		return;
+	}
 	loadSnapshot(player, thread->core);
 	thread->core->setPeripheral(thread->core, mPERIPH_GBA_LINK_PORT, &player->driver.d);
 	player->driver.d.reset(&player->driver.d);
@@ -639,6 +648,9 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 			        (flags & 1) ? "hidden" : "visible");
 		} else if (message[0] == MSG_PING && length == 9) {
 			wsSend(conn, message, length, NULL, 0);
+		} else if (message[0] == MSG_RESET && length == 1) {
+			fprintf(stderr, "player %d: reset\n", index);
+			mCoreThreadReset(&player->thread);
 		}
 	}
 

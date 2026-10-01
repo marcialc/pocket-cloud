@@ -8,13 +8,14 @@ import type { Emulator } from "./Emulator";
  * and sends the buttons back over a WebSocket. It implements Emulator so the
  * keyboard, gamepad and touch controls and the volume work unchanged; there's
  * no battery save here (it comes back when the cable is pulled) and no pause,
- * since the friend's game runs on the same cable.
+ * since the friend's game runs on the same cable. reset() powers the GBA off
+ * and on with the cable still in, for games that look for it at power-on.
  *
  * Protocol (link-server/src/linkd.c), binary messages, little-endian:
  *   server: 0x00 player width(u16) height(u16) | 0x01 seq(u32) zlib(BGR555 XOR
  *           previous frame) | 0x02 ping echo | 0x03 rate(u32) mu-law sound
  *   client: 0x01 keys(u16) | 0x02 8-byte ping | 0x03 seq(u32) frame drawn |
- *           0x04 stats for the link server's logs (see linkd.c)
+ *           0x04 stats for the link server's logs (see linkd.c) | 0x05 reset
  *
  * Saying which frames were drawn keeps the server from getting more than a
  * few frames ahead: otherwise a slow connection or device queues frames on
@@ -29,6 +30,7 @@ const MSG_AUDIO = 0x03;
 const MSG_PING = 0x02;
 const MSG_DRAWN = 0x03;
 const MSG_STATS = 0x04;
+const MSG_RESET = 0x05;
 
 // GBA key bits: A B Select Start Right Left Up Down R L.
 const KEY_BITS: Partial<Record<Button, number>> = {
@@ -97,7 +99,10 @@ export class LinkEmulator implements Emulator {
   async loadRom(): Promise<void> {}
   start(): void {}
   pause(): void {}
-  reset(): void {}
+
+  reset(): void {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(new Uint8Array([MSG_RESET]));
+  }
 
   buttonDown(button: Button): void {
     const bit = KEY_BITS[button];
