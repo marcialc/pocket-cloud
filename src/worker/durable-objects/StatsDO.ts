@@ -141,6 +141,22 @@ export class StatsDO extends DurableObject<Env> {
     this.sql.exec("UPDATE players SET link_plugs = link_plugs + 1 WHERE player_id = ?", playerId);
   }
 
+  /** Which of these players this object has never seen (e.g. accounts from before tracking began). */
+  async untracked(playerIds: string[]): Promise<string[]> {
+    const seen = new Set<string>();
+    // SQLite in Durable Objects binds at most 100 parameters per statement.
+    for (let i = 0; i < playerIds.length; i += 100) {
+      const chunk = playerIds.slice(i, i + 100);
+      for (const row of this.sql.exec<{ player_id: string }>(
+        `SELECT player_id FROM players WHERE player_id IN (${chunk.map(() => "?").join(",")})`,
+        ...chunk,
+      )) {
+        seen.add(row.player_id);
+      }
+    }
+    return playerIds.filter((id) => !seen.has(id));
+  }
+
   /** The last `days` UTC days (today included) and the players most recently seen. */
   async report(days: number, maxPlayers: number, now = Date.now()): Promise<StatsReport> {
     const today = Date.parse(utcDay(now));

@@ -26,8 +26,9 @@ export type AdminPlayer = {
   playerId: string;
   /** Display name for friends and leaderboards, if they picked one. */
   name: string | null;
-  /** Null for players seen only through their profile or ROMs (before tracking began). */
-  kind: PlayerKind | null;
+  /** Players known only by a profile or ROMs (from before tracking began) are accounts: both need email sign-in. */
+  kind: PlayerKind;
+  /** Null for players known only by their ROMs (from before tracking began). */
   firstSeen: number | null;
   lastSeen: number | null;
   signedUpAt: number | null;
@@ -75,4 +76,4 @@ export type AdminStatsResponse = {
 export const ADMIN_STATS_DAYS = [7, 30, 90] as const;
 export const MAX_ADMIN_PLAYERS = 500;
 
-export type AdminErrorResponse = { error: "not_admin"; playerId: string } | { error: string };
+export type AdminErrorResponse = { error: string };

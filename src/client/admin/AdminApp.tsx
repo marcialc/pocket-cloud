@@ -8,8 +8,6 @@ type Days = (typeof ADMIN_STATS_DAYS)[number];
 
 type Load =
   | { status: "loading" }
-  | { status: "signed_out" }
-  | { status: "not_admin"; playerId: string }
   | { status: "error"; message: string }
   | { status: "ready"; data: AdminStatsResponse };
 
@@ -57,12 +55,10 @@ export function AdminApp() {
   const fetchStats = useCallback(async (range: Days) => {
     setRefreshing(true);
     try {
+      // The Access cookie goes along; the page needs no Pocket Cloud sign-in.
       const res = await fetch(`/api/admin/stats?days=${range}`, { credentials: "same-origin" });
-      if (res.status === 401) return setLoad({ status: "signed_out" });
-      const body = (await res.json()) as AdminStatsResponse | { error: string; playerId?: string };
+      const body = (await res.json()) as AdminStatsResponse | { error: string };
       if ("error" in body) {
-        if (body.error === "not_admin" && body.playerId) return setLoad({ status: "not_admin", playerId: body.playerId });
-        if (body.error === "sign_in_required") return setLoad({ status: "signed_out" });
         if (body.error === "access_required") return setLoad({ status: "error", message: ACCESS_EXPIRED });
         return setLoad({ status: "error", message: body.error });
       }
@@ -108,27 +104,6 @@ export function AdminApp() {
       </header>
 
       {load.status === "loading" && <p className="muted">Loading…</p>}
-      {load.status === "signed_out" && (
-        <section className="card notice">
-          <h2>Sign in first</h2>
-          <p>
-            The admin page uses your Pocket Cloud email sign-in. <a href="/">Open the app</a>, sign in, then come back to <code>/admin</code>.
-          </p>
-        </section>
-      )}
-      {load.status === "not_admin" && (
-        <section className="card notice">
-          <h2>Not an admin</h2>
-          <p>This account's player id is:</p>
-          <p>
-            <code className="select-all">{load.playerId}</code>
-          </p>
-          <p>
-            To make it an admin, add it to the <code>ADMIN_PLAYER_IDS</code> Worker secret (comma separated):
-          </p>
-          <pre>pnpm wrangler secret put ADMIN_PLAYER_IDS</pre>
-        </section>
-      )}
       {load.status === "error" && (
         <section className="card notice">
           <h2>Couldn't load the stats</h2>
@@ -339,7 +314,9 @@ function Players({ players, total }: { players: AdminPlayer[]; total: number }) 
                     {p.playerId.slice(0, 12)}
                   </code>
                 </td>
-                <td>{p.kind ? <span className={`badge ${p.kind}`}>{KIND_LABELS[p.kind]}</span> : <span className="muted">—</span>}</td>
+                <td>
+                  <span className={`badge ${p.kind}`}>{KIND_LABELS[p.kind]}</span>
+                </td>
                 <td className="muted">{p.lastSeen ? formatWhen(p.lastSeen) : "—"}</td>
                 <td className="muted">{p.firstSeen ? new Date(p.firstSeen).toLocaleDateString() : "—"}</td>
                 <td className="num">{number.format(p.savesSynced)}</td>

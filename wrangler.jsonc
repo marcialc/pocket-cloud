@@ -110,14 +110,13 @@
 	],
 	// Cloudflare Access app "Pocket Cloud admin" (Zero Trust) guards /admin* and
 	// /api/admin/*; the Worker checks its token against these (see src/worker/access.ts).
+	// Who may open the admin page is the "Pocket Cloud admins" Access policy.
 	"vars": {
 		"ACCESS_TEAM_DOMAIN": "marcialcabrera.cloudflareaccess.com",
 		"ACCESS_AUD": "c4d7902e5a24d1ef3eb669fb697cec9dd7f79013f627cee73bf64fb6d2de2660"
 	},
 	// Secret (not in this file): SESSION_SECRET, at least 32 characters.
 	//   pnpm wrangler secret put SESSION_SECRET
-	// Optional secret: ADMIN_PLAYER_IDS, comma-separated player ids allowed on /admin.
-	//   pnpm wrangler secret put ADMIN_PLAYER_IDS
 	// Worker Previews (branch/PR builds run `wrangler preview`). Each Preview gets
 	// its own Durable Objects; ROMs and rate limits are kept away from production.
 	//   pnpm wrangler r2 bucket create pocket-cloud-roms-preview   (once)

@@ -7,7 +7,6 @@ interface __BaseEnv_Env {
 	EMAIL: SendEmail;
 	AUTH_LIMITER: RateLimit;
 	SESSION_SECRET: string;
-	ADMIN_PLAYER_IDS?: string;
 	ACCESS_TEAM_DOMAIN: string;
 	ACCESS_AUD: string;
 	PLAYER_SAVE: DurableObjectNamespace<import("./src/worker/index").PlayerSaveDO>;

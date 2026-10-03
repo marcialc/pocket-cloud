@@ -1,3 +1,1 @@
 SESSION_SECRET=local-dev-only-secret-change-me-0123456789
-# Player ids allowed on /admin (comma separated). Open /admin signed in to see yours.
-ADMIN_PLAYER_IDS=

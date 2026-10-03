@@ -53,7 +53,7 @@ export { StatsDO } from "./durable-objects/StatsDO";
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
  *   /api/link/*                    GBA link play with a friend (email sign-in only), see link.ts
- *   /api/admin/*                   usage dashboard (admins only, behind Cloudflare Access), see admin.ts
+ *   /api/admin/*                   usage dashboard (Cloudflare Access only), see admin.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *   GET    /api/covers/*           game box art (no sign-in), see covers.ts
  *
@@ -105,8 +105,10 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   }
   if (!roms && !settings && !social && !link && !admin && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
   if (admin) {
+    // Admins are whoever the Access policy lets through; no Pocket Cloud sign-in needed.
     const access = await verifyAccess(request, env);
     if (!access.ok) return json({ error: access.error }, access.error === "access_not_configured" ? 503 : 403);
+    return handleAdmin(request, env, url);
   }
 
   const identity = await authenticate(request, env);
@@ -140,10 +142,6 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     // Linking is between friends, who know each other by account.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
     return handleLink(request, env, url, identity.playerId, ctx);
-  }
-  if (admin) {
-    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
-    return handleAdmin(request, env, url, identity.playerId);
   }
 
   if (path === "/api/saves") {

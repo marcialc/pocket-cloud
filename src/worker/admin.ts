@@ -9,16 +9,14 @@ import { socialStub } from "./social";
 import { statsStub } from "./stats";
 
 /**
- * Read-only admin dashboard data (email sign-in, admins only):
+ * Read-only admin dashboard data:
  *
  *   GET /api/admin/stats?days=7|30|90   see AdminStatsResponse
  *
- * Admins are the player ids listed in the ADMIN_PLAYER_IDS Worker secret
- * (comma separated). Anyone else signed in gets 403 with their own player id,
- * so whoever runs the site can find the id to add.
+ * Only reached through Cloudflare Access (checked in index.ts, see access.ts);
+ * who counts as an admin is the Access policy's allow list.
  */
-export async function handleAdmin(request: Request, env: Env, url: URL, playerId: string): Promise<Response> {
-  if (!isAdmin(env, playerId)) return json({ error: "not_admin", playerId }, 403);
+export async function handleAdmin(request: Request, env: Env, url: URL): Promise<Response> {
   if (url.pathname !== "/api/admin/stats") return json({ error: "not_found" }, 404);
   if (request.method !== "GET") return methodNotAllowed();
   const days = Number(url.searchParams.get("days") ?? 30);
@@ -26,24 +24,25 @@ export async function handleAdmin(request: Request, env: Env, url: URL, playerId
   return json(await adminStats(env, days));
 }
 
-export function isAdmin(env: Env, playerId: string): boolean {
-  const ids = (env.ADMIN_PLAYER_IDS ?? "").split(",").map((id) => id.trim().toLowerCase());
-  return ids.includes(playerId);
-}
-
 async function adminStats(env: Env, days: number): Promise<AdminStatsResponse> {
+  const stats = statsStub(env);
   const [report, social, storage] = await Promise.all([
-    statsStub(env).report(days, MAX_ADMIN_PLAYERS),
+    stats.report(days, MAX_ADMIN_PLAYERS),
     socialStub(env).adminSummary(),
     bucketUsage(env),
   ]);
+  // Profiles and cloud libraries need email sign-in, so whoever has one is an account,
+  // whether or not the StatsDO has seen them yet.
+  const accountIds = new Set([...social.profiles.map((p) => p.playerId), ...storage.perPlayer.keys()]);
+  const untracked = await stats.untracked([...accountIds]);
 
   // Everyone the StatsDO has seen, plus players known only by a profile or ROMs from before tracking began.
   const players = new Map<string, AdminPlayer>();
+  // Only made for players found by a profile or ROMs: accounts.
   const blank = (playerId: string): AdminPlayer => ({
     playerId,
     name: null,
-    kind: null,
+    kind: "account",
     firstSeen: null,
     lastSeen: null,
     signedUpAt: null,
@@ -82,7 +81,11 @@ async function adminStats(env: Env, days: number): Promise<AdminStatsResponse> {
   return {
     generatedAt: Date.now(),
     trackingSince: report.trackingSince,
-    totals: report.totals,
+    totals: {
+      ...report.totals,
+      players: report.totals.players + untracked.length,
+      accounts: report.totals.accounts + untracked.length,
+    },
     daily: report.daily,
     platforms: report.platforms,
     games: report.games,
@@ -101,7 +104,7 @@ async function adminStats(env: Env, days: number): Promise<AdminStatsResponse> {
       truncated: storage.truncated,
     },
     players: list.slice(0, MAX_ADMIN_PLAYERS),
-    playerCount: list.length,
+    playerCount: report.totals.players + untracked.length,
   };
 }
 

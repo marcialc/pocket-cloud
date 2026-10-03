@@ -53,7 +53,6 @@ button:focus-visible, input:focus-visible, svg:focus-visible, summary:focus-visi
 .card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .notice { max-width: 640px; display: flex; flex-direction: column; gap: 8px; }
 .notice p { margin: 0; }
-.select-all { user-select: all; overflow-wrap: anywhere; }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .tile { display: flex; flex-direction: column; gap: 2px; }

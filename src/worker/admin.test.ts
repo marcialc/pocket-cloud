@@ -7,8 +7,6 @@ import type { StatsDO } from "./durable-objects/StatsDO";
 
 const API = "https://example.com/api";
 const DAY = 24 * 60 * 60 * 1000;
-// ADMIN_PLAYER_IDS in vitest.config.ts is this key's player.
-const ADMIN_KEY = "0a0a0a0a-0000-4000-8000-00000000ad01";
 let ip = 120;
 
 afterEach(() => vi.restoreAllMocks());
@@ -68,27 +66,22 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
   });
 }
 
-/** Signs in a new email; with `key`, its anonymous player becomes the account's. */
-async function signIn(key?: string): Promise<string> {
+/** Signs in a new email. */
+async function signIn(): Promise<string> {
   const email = `player-${crypto.randomUUID()}@example.com`;
   const stub = env.AUTH.getByName(`auth:${await sha256Hex(new TextEncoder().encode(email))}`);
   await runInDurableObject(stub, (_: AuthDO, state) => state.storage.sql.exec("DELETE FROM code_sends"));
   const send = vi.spyOn(env.EMAIL, "send").mockResolvedValue({ messageId: "test" } as never);
   expect((await post("/auth/request", { email })).status).toBe(200);
   const code = /code is: ([A-Z0-9]{4}-[A-Z0-9]{4})/.exec((send.mock.calls.at(-1)![0] as { text: string }).text)![1]!;
-  const res = await post("/auth/verify", { email, code }, key ? { Authorization: `Bearer ${key}` } : {});
+  const res = await post("/auth/verify", { email, code });
   expect(res.status).toBe(200);
   return res.headers.get("Set-Cookie")!.split(";")[0]!;
 }
 
-let adminCookie: string | undefined;
-async function admin(): Promise<string> {
-  adminCookie ??= await signIn(ADMIN_KEY);
-  return adminCookie;
-}
-
-async function stats(cookie: string, days = 30) {
-  return SELF.fetch(`${API}/admin/stats?days=${days}`, { headers: { Cookie: cookie, "Cf-Access-Jwt-Assertion": await accessToken() } });
+/** The stats as an admin sees them: through Access, with no Pocket Cloud sign-in. */
+async function stats(days = 30) {
+  return SELF.fetch(`${API}/admin/stats?days=${days}`, { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } });
 }
 
 async function putSave(auth: { Cookie: string } | { Authorization: string }, gameId: string) {
@@ -102,8 +95,8 @@ async function putSave(auth: { Cookie: string } | { Authorization: string }, gam
 }
 
 describe("admin access", () => {
-  it("needs a valid Cloudflare Access token before anything else", async () => {
-    const cookie = await admin();
+  it("needs a valid Cloudflare Access token, whatever else the request has", async () => {
+    const cookie = await signIn();
     const refused = async (headers: Record<string, string>) => {
       const res = await SELF.fetch(`${API}/admin/stats`, { headers: { Cookie: cookie, ...headers } });
       expect(res.status).toBe(403);
@@ -125,35 +118,21 @@ describe("admin access", () => {
     const payload = base64Url(new TextEncoder().encode(JSON.stringify({ aud: [AUD], iss: `https://${TEAM}`, exp: 9e9 })));
     await refused({ "Cf-Access-Jwt-Assertion": `${head}.${payload}.${sig}` });
 
-    expect((await SELF.fetch(`${API}/admin/stats`, { headers: { Cookie: cookie, "Cf-Access-Jwt-Assertion": await accessToken() } })).status).toBe(200);
+    expect((await stats()).status).toBe(200);
   });
 
-  it("then needs a signed-in admin", async () => {
-    const access = { "Cf-Access-Jwt-Assertion": await accessToken() };
-    expect((await SELF.fetch(`${API}/admin/stats`, { headers: access })).status).toBe(401);
-    const anonymous = await SELF.fetch(`${API}/admin/stats`, { headers: { ...access, Authorization: `Bearer ${crypto.randomUUID()}` } });
-    expect(anonymous.status).toBe(403);
-    expect(await anonymous.json()).toEqual({ error: "sign_in_required" });
-
-    const res = await stats(await signIn());
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "not_admin", playerId: expect.stringMatching(/^[0-9a-f]{64}$/) });
-  });
-
-  it("lets an admin read the stats, for 7, 30 or 90 days only", async () => {
-    const cookie = await admin();
-    const res = await stats(cookie, 7);
+  it("serves the stats for 7, 30 or 90 days only", async () => {
+    const res = await stats(7);
     expect(res.status).toBe(200);
     expect((await res.json<AdminStatsResponse>()).daily).toHaveLength(7);
-    expect((await stats(cookie, 12)).status).toBe(400);
-    expect((await SELF.fetch(`${API}/admin/nope`, { headers: { Cookie: cookie, "Cf-Access-Jwt-Assertion": await accessToken() } })).status).toBe(404);
+    expect((await stats(12)).status).toBe(400);
+    expect((await SELF.fetch(`${API}/admin/nope`, { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } })).status).toBe(404);
   });
 });
 
 describe("admin stats", () => {
   it("counts sign-ups, saves, games and players, with display names and no emails", async () => {
-    const cookie = await admin();
-    const before = await (await stats(cookie)).json<AdminStatsResponse>();
+    const before = await (await stats()).json<AdminStatsResponse>();
 
     const player = await signIn();
     const profile = await SELF.fetch(`${API}/social/profile`, {
@@ -168,7 +147,7 @@ describe("admin stats", () => {
     await putSave({ Cookie: player }, "gba:BPRE");
 
     await vi.waitFor(async () => {
-      const after = await (await stats(cookie)).json<AdminStatsResponse>();
+      const after = await (await stats()).json<AdminStatsResponse>();
       const today = after.daily.at(-1)!;
       const todayBefore = before.daily.at(-1)!;
       expect(today.signUps).toBe(todayBefore.signUps + 1);
@@ -183,8 +162,19 @@ describe("admin stats", () => {
     });
   });
 
+  it("counts accounts from before tracking began, known by their profile", async () => {
+    const before = await (await stats()).json<AdminStatsResponse>();
+    const playerId = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+    await env.SOCIAL.getByName("social").setProfile(playerId, "Old Timer");
+
+    const after = await (await stats()).json<AdminStatsResponse>();
+    expect(after.totals.players).toBe(before.totals.players + 1);
+    expect(after.totals.accounts).toBe(before.totals.accounts + 1);
+    expect(after.playerCount).toBe(after.totals.players);
+    expect(after.players.find((p) => p.playerId === playerId)).toMatchObject({ name: "Old Timer", kind: "account", lastSeen: null });
+  });
+
   it("counts ROM uploads and shows each player's library size", async () => {
-    const cookie = await admin();
     const player = await signIn();
     const rom = crypto.getRandomValues(new Uint8Array(1024));
     const res = await SELF.fetch(`${API}/roms/${await sha256Hex(rom)}?name=game.gb&title=GAME`, {
@@ -195,7 +185,7 @@ describe("admin stats", () => {
     expect(res.status).toBe(200);
 
     await vi.waitFor(async () => {
-      const after = await (await stats(cookie)).json<AdminStatsResponse>();
+      const after = await (await stats()).json<AdminStatsResponse>();
       expect(after.daily.at(-1)!.romUploads).toBeGreaterThanOrEqual(1);
       expect(after.storage.roms).toBeGreaterThanOrEqual(1);
       expect(after.players.some((p) => p.roms === 1 && p.romBytes === 1024 && p.kind === "account")).toBe(true);
