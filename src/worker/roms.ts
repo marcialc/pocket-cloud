@@ -14,6 +14,7 @@ import {
   type PutCoverResponse,
 } from "../shared/api";
 import { json, methodNotAllowed, readLimited } from "./http";
+import { track } from "./stats";
 
 /**
  * Cloud ROM library for signed-in players (R2, one object per ROM):
@@ -38,7 +39,7 @@ import { json, methodNotAllowed, readLimited } from "./http";
  * Covers live under covers/<playerId>/<romHash>, whether or not the game itself
  * is in the account, so the picture follows the player to every device.
  */
-export async function handleRoms(request: Request, env: Env, url: URL, playerId: string): Promise<Response> {
+export async function handleRoms(request: Request, env: Env, url: URL, playerId: string, ctx: ExecutionContext): Promise<Response> {
   const prefix = `roms/${playerId}/`;
   const removedPrefix = `removed/${playerId}/`;
   if (url.pathname === "/api/roms") {
@@ -74,7 +75,7 @@ export async function handleRoms(request: Request, env: Env, url: URL, playerId:
       });
     }
     case "PUT":
-      return putRom(request, env, url, prefix, removedPrefix, romHash);
+      return putRom(request, env, url, prefix, removedPrefix, romHash, ctx, playerId);
     case "DELETE": {
       if (!(await env.ROMS.head(key))) return json({ error: "not_found" }, 404);
       await env.ROMS.put(removedPrefix + romHash, new Uint8Array(0));
@@ -93,6 +94,8 @@ async function putRom(
   prefix: string,
   removedPrefix: string,
   romHash: string,
+  ctx: ExecutionContext,
+  playerId: string,
 ): Promise<Response> {
   const fileName = url.searchParams.get("name") ?? "";
   const title = url.searchParams.get("title") ?? "";
@@ -131,6 +134,7 @@ async function putRom(
     await env.ROMS.delete(prefix + romHash);
     return json({ error: "removed" }, 409);
   }
+  track(ctx, env, (stats) => stats.romUploaded(playerId));
   return json({ rom: toMeta(prefix, object) });
 }
 

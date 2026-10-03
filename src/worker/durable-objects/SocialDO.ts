@@ -303,6 +303,27 @@ export class SocialDO extends DurableObject<Env> {
       }));
   }
 
+  /** Totals and every profile's name, for the admin page. */
+  async adminSummary(): Promise<{
+    profiles: { playerId: string; name: string; createdAt: number }[];
+    friendships: number;
+    pendingRequests: number;
+    scores: number;
+  }> {
+    const count = (table: string) => this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
+    return {
+      profiles: this.sql
+        .exec<{ playerId: string; name: string; createdAt: number }>(
+          "SELECT player_id AS playerId, name, created_at AS createdAt FROM profiles",
+        )
+        .toArray(),
+      // Stored once per direction.
+      friendships: count("friends") / 2,
+      pendingRequests: count("friend_requests"),
+      scores: count("scores"),
+    };
+  }
+
   /** Friends both ways, and any request between the two of them is settled. */
   private makeFriends(a: string, b: string): void {
     const now = Date.now();

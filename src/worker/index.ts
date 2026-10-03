@@ -19,6 +19,8 @@ import {
   type SettingsResponse,
 } from "../shared/api";
 import { isShelf } from "../shared/shelf";
+import { verifyAccess } from "./access";
+import { handleAdmin } from "./admin";
 import { handleAuth } from "./auth/routes";
 import { handleCovers } from "./covers";
 import { clearSessionCookie } from "./auth/session";
@@ -28,10 +30,12 @@ import { authenticate } from "./identity";
 import { handleLink } from "./link";
 import { handleRoms } from "./roms";
 import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
+import { track, trackSeen } from "./stats";
 
 export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
 export { SocialDO } from "./durable-objects/SocialDO";
+export { StatsDO } from "./durable-objects/StatsDO";
 
 /**
  * API surface (everything else is static assets, see wrangler.jsonc):
@@ -49,6 +53,7 @@ export { SocialDO } from "./durable-objects/SocialDO";
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
  *   /api/link/*                    GBA link play with a friend (email sign-in only), see link.ts
+ *   /api/admin/*                   usage dashboard (admins only, behind Cloudflare Access), see admin.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *   GET    /api/covers/*           game box art (no sign-in), see covers.ts
  *
@@ -88,16 +93,21 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path === "/api/health") return json({ ok: true, time: Date.now() });
   if (path.startsWith("/api/covers/")) return handleCovers(request, path);
   if (isCrossSite(request, url)) return json({ error: "forbidden" }, 403);
-  if (path.startsWith("/api/auth/")) return handleAuth(request, env, path);
+  if (path.startsWith("/api/auth/")) return handleAuth(request, env, path, ctx);
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
   const settings = path === "/api/settings";
   const social = path.startsWith("/api/social/");
   const link = path.startsWith("/api/link/");
+  const admin = path.startsWith("/api/admin/");
   if (social) {
     const preview = await handleInvitePreview(request, env, path);
     if (preview) return preview;
   }
-  if (!roms && !settings && !social && !link && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  if (!roms && !settings && !social && !link && !admin && !path.startsWith("/api/saves")) return json({ error: "not_found" }, 404);
+  if (admin) {
+    const access = await verifyAccess(request, env);
+    if (!access.ok) return json({ error: access.error }, access.error === "access_not_configured" ? 503 : 403);
+  }
 
   const identity = await authenticate(request, env);
   if ("error" in identity) {
@@ -110,10 +120,11 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
       ? json({ error: "key_retired" }, 401)
       : json({ error: "session_invalid" }, 401, { "Set-Cookie": clearSessionCookie(request.url) });
   }
+  trackSeen(ctx, env, identity.playerId, identity.access.kind === "session" ? "account" : "anonymous");
   if (roms) {
     // ROMs are stored only for accounts, never for an anonymous key.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
-    return handleRoms(request, env, url, identity.playerId);
+    return handleRoms(request, env, url, identity.playerId, ctx);
   }
   if (settings) {
     // Settings follow the account; an anonymous key keeps them on its device.
@@ -128,7 +139,11 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (link) {
     // Linking is between friends, who know each other by account.
     if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
-    return handleLink(request, env, url, identity.playerId);
+    return handleLink(request, env, url, identity.playerId, ctx);
+  }
+  if (admin) {
+    if (identity.access.kind !== "session") return json({ error: "sign_in_required" }, 403);
+    return handleAdmin(request, env, url, identity.playerId);
   }
 
   if (path === "/api/saves") {
@@ -166,6 +181,10 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
         ...(body.force ? { force: true } : {}),
         ...(screenshot ? { screenshot } : {}),
       });
+      if (result.ok) {
+        const kind = identity.access.kind === "session" ? "account" : "anonymous";
+        track(ctx, env, (stats) => stats.saveSynced(identity.playerId, kind, body.gameId));
+      }
       // Leaderboards are best effort: the save answers without waiting on the shared SocialDO.
       if (result.ok && identity.access.kind === "session") {
         ctx.waitUntil(

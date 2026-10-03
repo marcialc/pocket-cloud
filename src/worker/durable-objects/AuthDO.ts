@@ -21,7 +21,7 @@ const HOUR_MS = 60 * 60 * 1000;
 export type IssueCodeResult = { ok: true; code: string } | { ok: false; retryAfter: number };
 
 export type VerifyCodeResult =
-  | { ok: true; playerId: string; epoch: number }
+  | { ok: true; playerId: string; epoch: number; created: boolean }
   | { ok: false; error: "invalid_code" | "code_expired" | "too_many_attempts" | "account_unavailable" };
 
 const MIGRATIONS: string[] = [
@@ -126,7 +126,7 @@ export class AuthDO extends DurableObject<Env> {
     const account = this.readAccount();
     if (account) {
       const claimed = await this.player(account.player_id).claim(ownerId);
-      return claimed.ok ? { ok: true, playerId: account.player_id, epoch: claimed.epoch } : { ok: false, error: "account_unavailable" };
+      return claimed.ok ? { ok: true, playerId: account.player_id, epoch: claimed.epoch, created: false } : { ok: false, error: "account_unavailable" };
     }
 
     // First sign-in for this email.
@@ -142,10 +142,10 @@ export class AuthDO extends DurableObject<Env> {
     const raced = this.readAccount();
     if (raced) {
       const again = await this.player(raced.player_id).claim(ownerId);
-      return again.ok ? { ok: true, playerId: raced.player_id, epoch: again.epoch } : { ok: false, error: "account_unavailable" };
+      return again.ok ? { ok: true, playerId: raced.player_id, epoch: again.epoch, created: false } : { ok: false, error: "account_unavailable" };
     }
     this.sql.exec("INSERT INTO account (id, player_id, created_at) VALUES (1, ?, ?)", playerId, now);
-    return { ok: true, playerId, epoch: claimed.epoch };
+    return { ok: true, playerId, epoch: claimed.epoch, created: true };
   }
 
   private readAccount(): { player_id: string } | null {

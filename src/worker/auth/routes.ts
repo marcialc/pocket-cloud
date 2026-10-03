@@ -7,6 +7,7 @@ import {
 } from "../../shared/auth";
 import { json, methodNotAllowed } from "../http";
 import { resolvePlayer } from "../identity";
+import { track } from "../stats";
 import { sendCodeEmail } from "./email";
 import {
   SESSION_MAX_AGE_S,
@@ -27,7 +28,7 @@ import {
  *
  * Emails and codes are never logged.
  */
-export async function handleAuth(request: Request, env: Env, path: string): Promise<Response> {
+export async function handleAuth(request: Request, env: Env, path: string, ctx: ExecutionContext): Promise<Response> {
   const secret = sessionSecret(env);
   if (!secret) {
     console.error(JSON.stringify({ message: "auth disabled: SESSION_SECRET missing or too short" }));
@@ -38,7 +39,7 @@ export async function handleAuth(request: Request, env: Env, path: string): Prom
     case "/api/auth/request":
       return request.method === "POST" ? requestCode(request, env) : methodNotAllowed();
     case "/api/auth/verify":
-      return request.method === "POST" ? verifyCode(request, env, secret) : methodNotAllowed();
+      return request.method === "POST" ? verifyCode(request, env, secret, ctx) : methodNotAllowed();
     case "/api/auth/me":
       return request.method === "GET" ? me(request, env, secret) : methodNotAllowed();
     case "/api/auth/logout":
@@ -69,7 +70,7 @@ async function requestCode(request: Request, env: Env): Promise<Response> {
   return json({ ok: true });
 }
 
-async function verifyCode(request: Request, env: Env, secret: string): Promise<Response> {
+async function verifyCode(request: Request, env: Env, secret: string, ctx: ExecutionContext): Promise<Response> {
   const limited = await ipLimited(request, env);
   if (limited) return limited;
   const body = await readJson(request);
@@ -84,6 +85,7 @@ async function verifyCode(request: Request, env: Env, secret: string): Promise<R
   const ownerId = await ownerIdFor(email);
   const result = await authStub(env, ownerId).verifyCode(code, ownerId, candidate);
   if (!result.ok) return error(result.error, result.error === "account_unavailable" ? 409 : 400);
+  track(ctx, env, (stats) => stats.signedIn(result.playerId, result.created));
 
   const cookie = await createSessionCookie(
     secret,

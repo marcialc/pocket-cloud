@@ -2,6 +2,7 @@ import { HASH_PATTERN, MAX_LINK_STATE_BYTES, MAX_SRAM_BYTES, base64ToBytes } fro
 import { normalizeFriendCode } from "../shared/social";
 import { json, methodNotAllowed, readLimited } from "./http";
 import { socialStub } from "./social";
+import { track } from "./stats";
 
 /**
  * GBA link play between two friends (email sign-in only). Both games run in
@@ -39,7 +40,7 @@ type LinkRoomStatus = {
   error?: string;
 };
 
-export async function handleLink(request: Request, env: Env, url: URL, playerId: string): Promise<Response> {
+export async function handleLink(request: Request, env: Env, url: URL, playerId: string, ctx: ExecutionContext): Promise<Response> {
   const match = /^\/api\/link\/([^/]+)(?:\/([a-z]+))?$/.exec(url.pathname);
   const action = match?.[2] ?? "";
   if (!match || !(action in METHODS)) return json({ error: "not_found" }, 404);
@@ -71,6 +72,7 @@ export async function handleLink(request: Request, env: Env, url: URL, playerId:
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(plug),
       });
+      if (response.ok) track(ctx, env, (stats) => stats.linkPlugged(playerId));
       return json(view(await response.json<LinkRoomStatus>(), playerId, friendId), response.status);
     }
     case "": {

@@ -7,7 +7,7 @@ import { defineConfig, type Plugin } from "vite";
 
 /**
  * Builds sw.js (from src/sw.js) with the list of files to keep for offline play: everything
- * the build emits plus public/. Its version changes whenever any of them does.
+ * the build emits plus public/, except the admin page. Its version changes whenever any of them does.
  */
 function offlineServiceWorker(): Plugin {
   return {
@@ -22,6 +22,8 @@ function offlineServiceWorker(): Plugin {
         hash.update(fileName);
         // Build files that aren't served (the Cloudflare plugin's .assetsignore).
         if (fileName.startsWith(".")) continue;
+        // Only admins open it; players' devices shouldn't keep it.
+        if (fileName === "admin.html" || fileName.startsWith("assets/admin-")) continue;
         if (fileName === "index.html") hash.update(output.type === "asset" ? output.source : "");
         else urls.push(`/${fileName}`);
       }
@@ -47,4 +49,10 @@ function listFiles(dir: string): string[] {
 
 export default defineConfig({
   plugins: [react(), cloudflare(), offlineServiceWorker()],
+  environments: {
+    client: {
+      // The app, and the admin dashboard (/admin) as a page of its own.
+      build: { rolldownOptions: { input: { main: "index.html", admin: "admin.html" } } },
+    },
+  },
 });

@@ -7,15 +7,19 @@ interface __BaseEnv_Env {
 	EMAIL: SendEmail;
 	AUTH_LIMITER: RateLimit;
 	SESSION_SECRET: string;
+	ADMIN_PLAYER_IDS?: string;
+	ACCESS_TEAM_DOMAIN: string;
+	ACCESS_AUD: string;
 	PLAYER_SAVE: DurableObjectNamespace<import("./src/worker/index").PlayerSaveDO>;
 	AUTH: DurableObjectNamespace<import("./src/worker/index").AuthDO>;
 	SOCIAL: DurableObjectNamespace<import("./src/worker/index").SocialDO>;
+	STATS: DurableObjectNamespace<import("./src/worker/index").StatsDO>;
 	LINK: Fetcher /* pocket-cloud-link */;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/worker/index");
-		durableNamespaces: "PlayerSaveDO" | "AuthDO" | "SocialDO";
+		durableNamespaces: "PlayerSaveDO" | "AuthDO" | "SocialDO" | "StatsDO";
 	}
 	interface Env extends __BaseEnv_Env {}
 }
