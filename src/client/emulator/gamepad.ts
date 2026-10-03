@@ -8,7 +8,17 @@ import { keyMap } from "./keyBindings";
  * or of the pad's own button order when the browser doesn't know it. A D-pad
  * the browser reports as a hat axis becomes HAT_UP..HAT_RIGHT.
  */
-export type PadBindings = Partial<Record<Button, number[]>>;
+export type PadBindings = Partial<Record<PadAction, number[]>>;
+
+/**
+ * A controller-only button with no console counterpart: opens the in-game menu
+ * (and from there, the games). It never reaches the game.
+ */
+export const MENU = "menu";
+export type PadAction = Button | typeof MENU;
+
+/** Home (Nintendo, 8BitDo) or Guide (Xbox) on the standard layout: the menu button by default. */
+const HOME = 16;
 
 /** Every platform's controller bindings (the Game Boy Color shares the Game Boy's). */
 export type AllPadBindings = Record<ControlsId, PadBindings>;
@@ -48,7 +58,7 @@ function defaultIndexes(button: Button): number[] {
 }
 
 export const DEFAULT_PAD_BINDINGS: AllPadBindings = Object.fromEntries(
-  CONTROLS_IDS.map((id) => [id, Object.fromEntries(PLATFORMS[id].buttons.map((b) => [b, defaultIndexes(b)]))]),
+  CONTROLS_IDS.map((id) => [id, { ...Object.fromEntries(PLATFORMS[id].buttons.map((b) => [b, defaultIndexes(b)])), [MENU]: [HOME] }]),
 ) as AllPadBindings;
 
 /** Real buttons, then the hat's four directions. */
@@ -67,6 +77,11 @@ export function sanitizePadBindings(value: unknown, controls: ControlsId = "gb")
     indexes.forEach((i) => seen.add(i));
     result[button] = indexes;
   }
+  // After the console's buttons, so a button they use can't also open the menu.
+  const menu = input[MENU];
+  result[MENU] = Array.isArray(menu)
+    ? menu.filter((i): i is number => Number.isInteger(i) && i >= 0 && i <= MAX_PAD_BUTTON && !seen.has(i))
+    : [HOME].filter((i) => !seen.has(i));
   return result;
 }
 
@@ -128,7 +143,7 @@ export function padButtons(pad: PadLike & { id?: string }, bindings: PadBindings
   const held = new Set<Button>();
   for (const i of pressedIndexes(pad)) {
     const button = map.get(i);
-    if (button) held.add(button);
+    if (button && button !== MENU) held.add(button);
   }
   const [x = 0, y = 0] = pad.axes;
   if (x <= -STICK_THRESHOLD) held.add("left");
@@ -136,6 +151,12 @@ export function padButtons(pad: PadLike & { id?: string }, bindings: PadBindings
   if (y <= -STICK_THRESHOLD) held.add("up");
   if (y >= STICK_THRESHOLD) held.add("down");
   return held;
+}
+
+/** Whether any of these gamepads is pressing one of the menu button's indexes. */
+export function menuHeld(pads: readonly (PadLike & { id?: string })[], bindings: PadBindings): boolean {
+  const menu = bindings[MENU] ?? [];
+  return pads.some((pad) => pressedIndexes(pad).some((i) => menu.includes(i)));
 }
 
 /** Calls `onPads` every frame with the connected gamepads. Returns a stop function. */
@@ -163,6 +184,9 @@ export function heldButtons(pads: readonly (PadLike & { id?: string })[], bindin
  */
 export function bindGamepads(emulator: Emulator, bindings: PadBindings, target: Window = window): () => void {
   let held = new Set<Button>();
+  // Buttons already down when the game takes the controller back (the B that closed the menu)
+  // only reach it once let go and pressed again.
+  let stale: Set<Button> | null = null;
 
   const apply = (next: Set<Button>) => {
     for (const b of held) if (!next.has(b)) emulator.buttonUp(b);
@@ -174,7 +198,15 @@ export function bindGamepads(emulator: Emulator, bindings: PadBindings, target: 
   const releaseAll = () => apply(new Set());
   const onVisibility = () => target.document.hidden && releaseAll();
 
-  const stop = pollGamepads((pads) => apply(heldButtons(pads, bindings)), target);
+  const stop = pollGamepads((pads) => {
+    const now = heldButtons(pads, bindings);
+    stale ??= new Set(now);
+    for (const b of stale) {
+      if (now.has(b)) now.delete(b);
+      else stale.delete(b);
+    }
+    apply(now);
+  }, target);
   target.addEventListener("blur", releaseAll);
   target.document.addEventListener("visibilitychange", onVisibility);
   return () => {
@@ -199,6 +231,15 @@ const NINTENDO = /8bitdo|nintendo|pro controller|joy-con|057e|2dc8/i;
 const DPAD_NAMES = ["D-pad ↑", "D-pad ↓", "D-pad ←", "D-pad →"];
 const NINTENDO_NAMES = ["B", "A", "Y", "X", "L", "R", "ZL", "ZR", "−", "+", "L3", "R3", ...DPAD_NAMES, "Home"];
 const XBOX_NAMES = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "LS", "RS", ...DPAD_NAMES, "Guide"];
+
+/**
+ * Buttons that pick and go back in menus, by what's printed on them: the A
+ * button picks, B goes back. Pads without the standard layout get the default
+ * game buttons' positions (right picks, bottom goes back).
+ */
+export function menuButtons(pad: Pick<Gamepad, "id" | "mapping">): { confirm: number; back: number } {
+  return pad.mapping === "standard" && !NINTENDO.test(pad.id) ? { confirm: 0, back: 1 } : { confirm: 1, back: 0 };
+}
 
 /**
  * The name printed on the controller for button `index`. Without the standard

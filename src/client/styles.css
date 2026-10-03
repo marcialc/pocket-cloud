@@ -56,6 +56,9 @@ button:disabled { cursor: not-allowed; }
 h1, h2, h3, p { margin: 0; }
 :focus { outline: none; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+/* Moving around with a controller (padNav.ts): always show where the focus is. */
+[data-input="pad"] :focus { outline: 3px solid var(--accent); outline-offset: 3px; }
+[data-input="pad"] .side-panel:focus { outline: none; }
 
 .px { font-family: var(--pixel); font-weight: 400; line-height: 1.5; letter-spacing: 0.02em; }
 .sr-only {

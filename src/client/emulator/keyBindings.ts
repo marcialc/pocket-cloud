@@ -45,9 +45,9 @@ export function isBindable(code: string): boolean {
 }
 
 /** code -> button lookup for the key handler (also takes controller bindings). */
-export function keyMap<T>(bindings: Partial<Record<Button, T[]>>): Map<T, Button> {
-  const map = new Map<T, Button>();
-  for (const [button, codes] of Object.entries(bindings) as [Button, T[]][]) for (const code of codes) map.set(code, button);
+export function keyMap<K extends string, T>(bindings: Partial<Record<K, T[]>>): Map<T, K> {
+  const map = new Map<T, K>();
+  for (const [button, codes] of Object.entries(bindings) as [K, T[]][]) for (const code of codes) map.set(code, button);
   return map;
 }
 
@@ -55,9 +55,9 @@ export function keyMap<T>(bindings: Partial<Record<Button, T[]>>): Map<T, Button
  * Assign `code` as the only key (or controller button) for `button`. If another
  * button used it, it loses it (a key drives exactly one button).
  */
-export function rebind<T>(bindings: Partial<Record<Button, T[]>>, button: Button, code: T): Partial<Record<Button, T[]>> {
-  const next: Partial<Record<Button, T[]>> = {};
-  for (const [b, codes] of Object.entries(bindings) as [Button, T[]][]) next[b] = codes.filter((c) => c !== code);
+export function rebind<K extends string, T>(bindings: Partial<Record<K, T[]>>, button: NoInfer<K>, code: T): Partial<Record<K, T[]>> {
+  const next: Partial<Record<K, T[]>> = {};
+  for (const [b, codes] of Object.entries(bindings) as [K, T[]][]) next[b] = codes.filter((c) => c !== code);
   next[button] = [code];
   return next;
 }
@@ -84,8 +84,8 @@ export function sanitizeAllBindings(value: unknown): AllKeyBindings {
   return Object.fromEntries(CONTROLS_IDS.map((id) => [id, sanitizeBindings(input[id], id)])) as AllKeyBindings;
 }
 
-export function sameBindings<T>(a: Partial<Record<Button, T[]>>, b: Partial<Record<Button, T[]>>): boolean {
-  const buttons = new Set([...Object.keys(a), ...Object.keys(b)] as Button[]);
+export function sameBindings<K extends string, T>(a: Partial<Record<K, T[]>>, b: Partial<Record<K, T[]>>): boolean {
+  const buttons = new Set([...Object.keys(a), ...Object.keys(b)] as K[]);
   return [...buttons].every((btn) => (a[btn] ?? []).join() === (b[btn] ?? []).join());
 }
 

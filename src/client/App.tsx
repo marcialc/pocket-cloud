@@ -49,6 +49,7 @@ import {
 } from "./saves/romLibrary";
 import { localFromCloud, planLaunch, type LaunchPlan } from "./saves/SaveSync";
 import { matchCloud } from "./saves/sync";
+import { bindPadNavigation } from "./padNav";
 import { bindUiSounds } from "./uiSound";
 
 export type Session = {
@@ -96,6 +97,8 @@ export function App() {
     document.documentElement.dataset.motion = prefs.reduceMotion ? "reduce" : "system";
   }, [prefs.reduceMotion]);
   useEffect(() => (prefs.uiSounds ? bindUiSounds() : undefined), [prefs.uiSounds]);
+  // Controllers move around the menus everywhere (games take them back while playing).
+  useEffect(() => bindPadNavigation(), []);
 
   const refreshLibrary = useCallback(function refresh() {
     // The shelf shows only the signed-in account's games, so wait until it's known who that is.
