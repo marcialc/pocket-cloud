@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { CONTROLS_IDS, PLATFORM_IDS, PLATFORMS, buttonLabel, type Button, type ControlsId, type PlatformId } from "../../shared/platforms";
 import {
   DEFAULT_PAD_BINDINGS,
+  MENU,
   heldButtons,
   padButtonName,
   padName,
   pollGamepads,
   pressedIndexes,
   type AllPadBindings,
+  type PadAction,
   type PadBindings,
 } from "../emulator/gamepad";
 import { DEFAULT_KEY_BINDINGS, isBindable, keyLabel, keyMap, rebind, sameBindings, type AllKeyBindings, type KeyBindings } from "../emulator/keyBindings";
@@ -112,8 +114,8 @@ export function ControlsPanel({
   const padBindings = allPad[controls];
   const onChange = (next: KeyBindings) => onChangeAll({ ...all, [controls]: next });
   const onPadChange = (next: PadBindings) => onPadChangeAll({ ...allPad, [controls]: next });
-  const label = (button: Button) => buttonLabel(controls, button);
-  const [listening, setListening] = useState<Button | null>(null);
+  const label = (button: PadAction) => (button === MENU ? "Menu" : buttonLabel(controls, button));
+  const [listening, setListening] = useState<PadAction | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   // The keyup of the key just bound must not "click" the focused button (Space/Enter).
   const swallowUp = useRef<string | null>(null);
@@ -124,11 +126,13 @@ export function ControlsPanel({
   // Falls back to the keys if the controller goes away.
   const showPad = source === "controller" && padInfo !== null;
   const noun = showPad ? "button" : "key";
+  // The controller also has a menu button, which the console doesn't.
+  const actions: readonly PadAction[] = showPad ? [...buttons, MENU] : buttons;
 
   /** Makes `code` (a key or controller button, called `name`) the only one for the button being picked. */
-  function assign<T>(current: Partial<Record<Button, T[]>>, code: T, name: string, write: (next: Partial<Record<Button, T[]>>) => void) {
+  function assign<T>(current: Partial<Record<PadAction, T[]>>, code: T, name: string, write: (next: Partial<Record<PadAction, T[]>>) => void) {
     if (!listening) return;
-    const stolenFrom = buttons.find((b) => b !== listening && current[b]?.includes(code));
+    const stolenFrom = actions.find((b) => b !== listening && current[b]?.includes(code));
     const next = rebind(current, listening, code);
     write(next);
     if (stolenFrom) {
@@ -237,23 +241,63 @@ export function ControlsPanel({
     };
   }, [listening, bindings, showPad, onChange, onClose]);
 
-  const pick = (button: Button) => {
+  const pick = (button: PadAction) => {
     setNotice(null);
     setListening(listening === button ? null : button);
     document.getElementById(`bind-${button}`)?.focus();
   };
 
   /** What drives `button` in the view shown: key names, or controller button names. */
-  const names = (button: Button): string[] =>
+  const names = (button: PadAction): string[] =>
     showPad
       ? // A standard pad's D-pad buttons and a hat's directions share a name.
         [...new Set((padBindings[button] ?? []).map((i) => padButtonName(padInfo, i)))]
-      : (bindings[button] ?? []).map(keyLabel);
+      : button === MENU
+        ? []
+        : (bindings[button] ?? []).map(keyLabel);
   const unbound = buttons.filter((b) => names(b).length === 0);
   const pressed = (b: Button) => keysHeld.has(b) || padsHeld.has(b);
   const atDefaults = showPad
     ? sameBindings(padBindings, DEFAULT_PAD_BINDINGS[controls])
     : sameBindings(bindings, DEFAULT_KEY_BINDINGS[controls]);
+
+  const bindRow = (button: PadAction) => {
+    const keys = names(button);
+    const active = listening === button;
+    return (
+      <li key={button}>
+        <button
+          id={`bind-${button}`}
+          type="button"
+          className={`bind${active ? " listening" : ""}${keys.length === 0 ? " unbound" : ""}`}
+          onClick={() => pick(button)}
+          aria-label={
+            active
+              ? `Waiting for a ${noun} for ${label(button)}. Escape cancels.`
+              : `${label(button)}, set to ${describeKeys(keys, noun)}. Activate to change.`
+          }
+        >
+          <span className="bind-name">
+            {label(button)}
+            {keys.length === 0 && <Icon name="warn" size={15} />}
+          </span>
+          <span className="bind-keys">
+            {active ? (
+              <kbd className="listening">PRESS A {noun.toUpperCase()}</kbd>
+            ) : keys.length ? (
+              keys.map((name, i) => (
+                <kbd key={i}>
+                  <KeyName name={name} />
+                </kbd>
+              ))
+            ) : (
+              <kbd className="empty">NONE</kbd>
+            )}
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   return (
     <SidePanel
@@ -331,7 +375,8 @@ export function ControlsPanel({
         </div>
       )}
 
-      <div className="pad-diagram" aria-label="Handheld buttons" role="group">
+      {/* Controllers don't move around this panel (padNav.ts): their buttons light up the drawing and get bound. */}
+      <div className="pad-diagram" aria-label="Handheld buttons" role="group" data-pad-capture>
         <span className="pad-well" aria-hidden />
         <span className="pad-hub" aria-hidden />
         {buttons.map((b) => {
@@ -369,44 +414,14 @@ export function ControlsPanel({
       )}
 
       <ul className="bind-list">
-        {listOrder(buttons).map((button) => {
-          const keys = names(button);
-          const active = listening === button;
-          return (
-            <li key={button}>
-              <button
-                id={`bind-${button}`}
-                type="button"
-                className={`bind${active ? " listening" : ""}${keys.length === 0 ? " unbound" : ""}`}
-                onClick={() => pick(button)}
-                aria-label={
-                  active
-                    ? `Waiting for a ${noun} for ${label(button)}. Escape cancels.`
-                    : `${label(button)}, set to ${describeKeys(keys, noun)}. Activate to change.`
-                }
-              >
-                <span className="bind-name">
-                  {label(button)}
-                  {keys.length === 0 && <Icon name="warn" size={15} />}
-                </span>
-                <span className="bind-keys">
-                  {active ? (
-                    <kbd className="listening">PRESS A {noun.toUpperCase()}</kbd>
-                  ) : keys.length ? (
-                    keys.map((name, i) => (
-                      <kbd key={i}>
-                        <KeyName name={name} />
-                      </kbd>
-                    ))
-                  ) : (
-                    <kbd className="empty">NONE</kbd>
-                  )}
-                </span>
-              </button>
-            </li>
-          );
-        })}
+        {listOrder(buttons).map(bindRow)}
       </ul>
+      {showPad && (
+        <>
+          <ul className="bind-list">{bindRow(MENU)}</ul>
+          <p className="fine">Menu opens the menu over a game, with the way back to your games.</p>
+        </>
+      )}
       <p className="fine">
         {showPad
           ? "Esc cancels while a button is waiting for a controller button. The left stick always moves like the D-pad."

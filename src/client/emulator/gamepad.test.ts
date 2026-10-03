@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { CONTROLS_IDS, PLATFORMS } from "../../shared/platforms";
 import {
   DEFAULT_PAD_BINDINGS,
+  MENU,
   heldButtons,
+  menuButtons,
+  menuHeld,
   padButtonName,
   padButtons,
   padName,
@@ -37,7 +40,8 @@ describe("gamepad", () => {
   });
 
   it("gives each platform defaults for exactly its own buttons", () => {
-    for (const id of CONTROLS_IDS) expect(Object.keys(DEFAULT_PAD_BINDINGS[id]).sort()).toEqual([...PLATFORMS[id].buttons].sort());
+    for (const id of CONTROLS_IDS)
+      expect(Object.keys(DEFAULT_PAD_BINDINGS[id]).sort()).toEqual([...PLATFORMS[id].buttons, MENU].sort());
     expect(GB.a).toEqual([1]);
     expect(padButtons(pad([2, 3]), GB).size).toBe(0);
   });
@@ -54,7 +58,17 @@ describe("gamepad", () => {
   });
 
   it("ignores unbound buttons", () => {
-    expect(padButtons(pad([16]), GB).size).toBe(0);
+    expect(padButtons(pad([10]), GB).size).toBe(0);
+  });
+
+  it("keeps the menu button out of the game", () => {
+    expect(GB[MENU]).toEqual([16]);
+    expect(padButtons(pad([16, 1]), GB)).toEqual(new Set(["a"]));
+    expect(menuHeld([pad([]), pad([16])], GB)).toBe(true);
+    expect(menuHeld([pad([1])], GB)).toBe(false);
+    const onL = rebind(GB, MENU, 4);
+    expect(menuHeld([pad([4])], onL)).toBe(true);
+    expect(menuHeld([pad([16])], onL)).toBe(false);
   });
 
   it("combines several pads", () => {
@@ -69,6 +83,18 @@ describe("gamepad", () => {
       b: [],
       start: [],
     });
+    // The menu can't take a button the console uses.
+    expect(sanitizePadBindings({ a: [16] }, "gb")[MENU]).toEqual([]);
+    expect(sanitizePadBindings({ [MENU]: [1, 10] }, "gb")[MENU]).toEqual([10]);
+  });
+
+  it("picks with A and goes back with B, as printed on the pad", () => {
+    expect(menuButtons({ id: "Xbox Wireless Controller", mapping: "standard" }, GB)).toEqual({ confirm: [0], back: [1] });
+    expect(menuButtons({ id: "Pro Controller (STANDARD GAMEPAD Vendor: 057e)", mapping: "standard" }, GB)).toEqual({ confirm: [1], back: [0] });
+    // Without the standard layout, the buttons the player set as A and B.
+    const raw = { id: "8BitDo Lite 2 (Vendor: 2dc8 Product: 5112)", mapping: "" as const };
+    expect(menuButtons(raw, GB)).toEqual({ confirm: [1], back: [0] });
+    expect(menuButtons(raw, rebind(rebind(GB, "a", 0), "b", 1))).toEqual({ confirm: [0], back: [1] });
   });
 
   it("names pads without the browser's vendor details", () => {

@@ -56,6 +56,9 @@ button:disabled { cursor: not-allowed; }
 h1, h2, h3, p { margin: 0; }
 :focus { outline: none; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+/* Moving around with a controller (padNav.ts): always show where the focus is. */
+[data-input="pad"] :focus { outline: 3px solid var(--accent); outline-offset: 3px; }
+[data-input="pad"] .side-panel:focus { outline: none; }
 
 .px { font-family: var(--pixel); font-weight: 400; line-height: 1.5; letter-spacing: 0.02em; }
 .sr-only {
@@ -355,6 +358,18 @@ kbd.empty { color: var(--ink-2); }
   transition: transform 90ms steps(2);
 }
 .game-card:hover { transform: translateY(-3px); }
+/* Picked with a controller: the whole card, lifted as on hover. */
+[data-input="pad"] .game-card-play:focus { outline: none; }
+[data-input="pad"] .game-card:has(.game-card-play:focus) { transform: translateY(-3px); outline: 3px solid var(--accent); outline-offset: 3px; }
+/* Room for the lift and the ring when the controller scrolls a card into view. */
+.game-card { scroll-margin: 16px; }
+/* A slider the controller is moving (A took it; A or B lets go). */
+[data-input="pad"] input[data-pad-adjust]:focus { outline-style: dashed; outline-width: 4px; }
+/* A slider or switch in a settings row: ring the whole row, not the control. */
+[data-input="pad"] :is(.sheet-row, .setting):has(input:focus) { outline: 3px solid var(--accent); outline-offset: 2px; }
+[data-input="pad"] :is(.sheet-row, .setting):has(input[data-pad-adjust]:focus) { outline-style: dashed; }
+[data-input="pad"] :is(.sheet-row, .setting) input:focus { outline: none; }
+[data-input="pad"] .setting:has(input:focus) { border-radius: 10px; }
 /* The label grows to the card's height, so every label in a row ends at the same line. */
 .game-card-play {
   flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;

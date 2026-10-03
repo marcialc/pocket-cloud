@@ -5,7 +5,7 @@ import type { Profile } from "../../shared/social";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
-import { bindGamepads, padsInUse, pollGamepads } from "../emulator/gamepad";
+import { bindGamepads, menuHeld, padsInUse, pollGamepads } from "../emulator/gamepad";
 import { createEmulator } from "../emulator/createEmulator";
 import type { Emulator } from "../emulator/Emulator";
 import { LinkEmulator, unlockLinkAudio } from "../emulator/LinkEmulator";
@@ -227,12 +227,32 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   // Keyboard input; re-bound whenever the player remaps keys.
   useEffect(() => (playing ? bindKeyboard(playing, bindings) : undefined), [playing, bindings]);
-  // Game controllers (Gamepad API). Like keys, they don't reach the game while the
-  // Controls panel is open, where they light up its drawing and get remapped.
+  // Game controllers (Gamepad API). They don't reach the game while anything is open over it:
+  // they move around it instead (padNav.ts), or light up the Controls panel's drawing and get remapped.
+  const padInMenus = panel !== null || menu || confirmReset || gallery || openElsewhere || status.state === "conflict";
   useEffect(
-    () => (playing && panel !== "controls" ? bindGamepads(playing, padBindings) : undefined),
-    [playing, panel, padBindings],
+    () => (playing && !padInMenus ? bindGamepads(playing, padBindings) : undefined),
+    [playing, padInMenus, padBindings],
   );
+
+  // The controller's menu button opens the menu over the game, and closes it again.
+  const onMenuButton = useRef(() => {});
+  onMenuButton.current = () => {
+    if (menu) return setMenu(false);
+    if (padInMenus) return;
+    // Show where the focus is straight away, as a controller press in a menu would.
+    document.documentElement.dataset.input = "pad";
+    setMenu(true);
+  };
+  useEffect(() => {
+    // A press already held when this starts doesn't count.
+    let wasDown = true;
+    return pollGamepads((pads) => {
+      const down = menuHeld(pads, padBindings);
+      if (down && !wasDown) onMenuButton.current();
+      wasDown = down;
+    });
+  }, [padBindings]);
 
   // Playing with a controller hides the touch gamepad (phones only; it isn't shown elsewhere) until
   // the screen is touched or the last controller goes away. Waits for a press, not a connection:
@@ -617,6 +637,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator || (!!link && !linkEmu) },
   ];
 
+  const firstTool = tools.findIndex((t) => !t.disabled);
+
   return (
     <div
       className={`game${dim && !paused && !overlayOpen ? " idle" : ""}`}
@@ -815,7 +837,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               <h2 id="menu-title" className="px">
                 MENU
               </h2>
-              <button type="button" className="ibtn" autoFocus onClick={() => setMenu(false)} aria-label="Close menu">
+              <button type="button" className="ibtn" onClick={() => setMenu(false)} aria-label="Close menu">
                 <Icon name="close" size={18} />
               </button>
             </div>
@@ -824,11 +846,13 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
             ) : (
               <>
                 <div className="tiles">
-                  {tools.map((t) => (
+                  {tools.map((t, i) => (
                     <button
                       key={t.label}
                       type="button"
                       className="tile"
+                      // Opens on the first tile that can be used.
+                      autoFocus={i === firstTool}
                       disabled={t.disabled}
                       onClick={() => {
                         t.onClick();
@@ -838,7 +862,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                       <Icon name={t.icon} size={22} /> {t.label}
                     </button>
                   ))}
-                  <button type="button" className="tile" onClick={() => onPrefs({ muted: !prefs.muted })}>
+                  <button type="button" className="tile" autoFocus={firstTool < 0} onClick={() => onPrefs({ muted: !prefs.muted })}>
                     <Icon name={muted ? "soundOff" : "soundOn"} size={22} /> {prefs.muted ? "Unmute" : "Mute"}
                   </button>
                   {CAN_FULLSCREEN && (

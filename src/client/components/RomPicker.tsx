@@ -476,7 +476,7 @@ export function RomPicker({
               const favorite = favorites.has(rom.romHash);
               const cover = coverOf(rom);
               return (
-                <li key={rom.romHash} className={`game-card plastic${favorite ? " shiny" : ""}`}>
+                <li key={rom.romHash} className={`game-card plastic${favorite ? " shiny" : ""}`} data-pad-frame>
                   <button
                     type="button"
                     className={`fav-toggle tip tip-below${favorite ? " on" : ""}`}
@@ -490,6 +490,7 @@ export function RomPicker({
                   <button
                     type="button"
                     className="game-card-play"
+                    data-pad-target
                     disabled={!!busy}
                     onClick={() => onPlayStored(rom.romHash)}
                     aria-label={`Play ${rom.title}, ${rom.onDevice ? `played ${formatWhen(rom.lastPlayedAt)}` : "not played on this device"}${sync ? `, ${sync.label.toLowerCase()}` : ""}`}
