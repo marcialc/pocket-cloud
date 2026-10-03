@@ -63,9 +63,6 @@ Cloudflare Worker ──► Durable Objects (saves, accounts, friends)
 
 ## Docs
 
-- [Architecture](docs/architecture.md): project layout and emulator integration
-- [Saves and accounts](docs/saves-and-accounts.md): sync, sign-in and the ROM library
-- [Development notes](docs/development.md): deploying, testing, known limitations
 - [Link server](link-server/README.md): GBA link play
 
 ## Found a problem?
