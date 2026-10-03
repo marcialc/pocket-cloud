@@ -43,6 +43,18 @@ describe("padNav", () => {
     expect(nearest(menu[3]!.box, "up", menu.slice(0, 3))).toBe("games");
   });
 
+  it("keeps left and right in the row, even with a closer control in the next one", () => {
+    // Menu tiles, and below them a wide slider whose right end is nearer than the next tile.
+    const menu = [
+      { item: "mute", box: box(0, 0, 80, 60) },
+      { item: "fullscreen", box: box(200, 0, 80, 60) },
+      { item: "slider", box: box(60, 80, 130, 20) },
+    ];
+    expect(nearest(menu[1]!.box, "left", [menu[0]!, menu[2]!])).toBe("mute");
+    // Nothing more in the row: the next control that way.
+    expect(nearest(menu[0]!.box, "right", [menu[2]!])).toBe("slider");
+  });
+
   it("stays put at an edge", () => {
     expect(nearest(from("a3"), "right", others("a3"))).toBeNull();
     expect(nearest(from("a1"), "up", others("a1"))).toBeNull();

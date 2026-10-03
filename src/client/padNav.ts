@@ -1,7 +1,8 @@
 /**
  * Moving around the app with a game controller, like a console menu: the D-pad
  * (or left stick) moves the focus to the nearest control that way, A picks it,
- * B goes back (Escape). On the library page it only visits the games
+ * B goes back (Escape). A takes a slider, left and right move it, and A or B
+ * let it go. On the library page it only visits the games
  * (`data-pad-target`), and A plays one. Nothing to switch on: the first press
  * shows the focus, and the mouse, a touch or a key hides it again.
  *
@@ -67,7 +68,8 @@ export function focusables(scope: HTMLElement): HTMLElement[] {
 type Box = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 
 /**
- * The box nearest `from` in `direction`, like a console menu: the next row (or
+ * The box nearest `from` in `direction`, like a console menu. Left and right
+ * stay in the same row while it goes on that way. Otherwise: the next row (or
  * column) that way first, then the one in it closest to straight ahead. Null
  * when nothing lies that way.
  */
@@ -86,10 +88,18 @@ export function nearest<T>(from: Box, direction: Direction, candidates: readonly
     .map((c) => ({ ...c, span: span(c.box) }))
     .filter((c) => (c.span[0]! + c.span[1]!) / 2 > fromMid + 1);
   if (ahead.length === 0) return null;
+  const [fromLo, fromHi] = across(from);
+  const inLine = (b: Box) => {
+    const [lo, hi] = across(b);
+    return lo! < fromHi! && hi! > fromLo!;
+  };
+  if (horizontal) {
+    const sameRow = ahead.filter((c) => inLine(c.box));
+    if (sameRow.length) return sameRow.reduce((a, b) => (b.span[0]! < a.span[0]! ? b : a)).item;
+  }
   // The row: whatever overlaps, along the way, the first control that way.
   const first = ahead.reduce((a, b) => (b.span[0]! < a.span[0]! ? b : a));
   const row = ahead.filter((c) => c.span[0]! < first.span[1]! && c.span[1]! > first.span[0]!);
-  const [fromLo, fromHi] = across(from);
   const aside = (b: Box) => {
     const [lo, hi] = across(b);
     // Zero while the two overlap side to side; then by centres, so the most lined-up wins.
@@ -108,7 +118,22 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
 
 function focus(el: HTMLElement) {
   el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // All of what shows as picked (a whole game card), not just the button inside it.
+  (el.closest<HTMLElement>("[data-pad-frame]") ?? el).scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+const isSlider = (el: Element | null): el is HTMLInputElement => el instanceof HTMLInputElement && el.type === "range";
+
+/** A slider being moved: A took it (`data-pad-adjust`), and left and right move it until A or B lets go. */
+function adjusting(el: Element | null): el is HTMLInputElement {
+  return isSlider(el) && el.dataset.padAdjust !== undefined;
+}
+
+function setAdjusting(el: HTMLInputElement, on: boolean) {
+  if (!on) return delete el.dataset.padAdjust;
+  el.dataset.padAdjust = "";
+  // Let go if the focus goes elsewhere some other way (the mouse).
+  el.addEventListener("blur", () => delete el.dataset.padAdjust, { once: true });
 }
 
 function move(scope: HTMLElement, direction: Direction) {
@@ -118,8 +143,8 @@ function move(scope: HTMLElement, direction: Direction) {
     if (candidates[0]) focus(candidates[0]);
     return;
   }
-  // Sliders take left and right themselves.
-  if (active instanceof HTMLInputElement && active.type === "range" && (direction === "left" || direction === "right")) {
+  if (adjusting(active)) {
+    if (direction === "up" || direction === "down") return;
     if (direction === "right") active.stepUp();
     else active.stepDown();
     active.dispatchEvent(new Event("input", { bubbles: true }));
@@ -142,6 +167,7 @@ function confirm(scope: HTMLElement) {
     if (first) focus(first);
     return;
   }
+  if (isSlider(active)) return void setAdjusting(active, !adjusting(active));
   // Text can't be typed with a controller; it stays focused for the keyboard.
   if (active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
   if (active instanceof HTMLInputElement && !["checkbox", "radio", "button", "submit"].includes(active.type)) return;
@@ -150,6 +176,7 @@ function confirm(scope: HTMLElement) {
 
 function back(scope: HTMLElement) {
   const active = document.activeElement as HTMLElement | null;
+  if (adjusting(active)) return void setAdjusting(active, false);
   const target = active && scope.contains(active) ? active : scope;
   target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
 }

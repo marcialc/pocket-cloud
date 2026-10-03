@@ -637,6 +637,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     { icon: "reset", label: "Reset", onClick: openReset, disabled: !emulator || (!!link && !linkEmu) },
   ];
 
+  const firstTool = tools.findIndex((t) => !t.disabled);
+
   return (
     <div
       className={`game${dim && !paused && !overlayOpen ? " idle" : ""}`}
@@ -835,7 +837,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               <h2 id="menu-title" className="px">
                 MENU
               </h2>
-              <button type="button" className="ibtn" autoFocus onClick={() => setMenu(false)} aria-label="Close menu">
+              <button type="button" className="ibtn" onClick={() => setMenu(false)} aria-label="Close menu">
                 <Icon name="close" size={18} />
               </button>
             </div>
@@ -844,11 +846,13 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
             ) : (
               <>
                 <div className="tiles">
-                  {tools.map((t) => (
+                  {tools.map((t, i) => (
                     <button
                       key={t.label}
                       type="button"
                       className="tile"
+                      // Opens on the first tile that can be used.
+                      autoFocus={i === firstTool}
                       disabled={t.disabled}
                       onClick={() => {
                         t.onClick();
@@ -858,7 +862,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                       <Icon name={t.icon} size={22} /> {t.label}
                     </button>
                   ))}
-                  <button type="button" className="tile" onClick={() => onPrefs({ muted: !prefs.muted })}>
+                  <button type="button" className="tile" autoFocus={firstTool < 0} onClick={() => onPrefs({ muted: !prefs.muted })}>
                     <Icon name={muted ? "soundOff" : "soundOn"} size={22} /> {prefs.muted ? "Unmute" : "Mute"}
                   </button>
                   {CAN_FULLSCREEN && (
