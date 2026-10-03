@@ -89,9 +89,12 @@ describe("gamepad", () => {
   });
 
   it("picks with A and goes back with B, as printed on the pad", () => {
-    expect(menuButtons({ id: "Xbox Wireless Controller", mapping: "standard" })).toEqual({ confirm: 0, back: 1 });
-    expect(menuButtons({ id: "Pro Controller (STANDARD GAMEPAD Vendor: 057e)", mapping: "standard" })).toEqual({ confirm: 1, back: 0 });
-    expect(menuButtons({ id: "Some pad", mapping: "" })).toEqual({ confirm: 1, back: 0 });
+    expect(menuButtons({ id: "Xbox Wireless Controller", mapping: "standard" }, GB)).toEqual({ confirm: [0], back: [1] });
+    expect(menuButtons({ id: "Pro Controller (STANDARD GAMEPAD Vendor: 057e)", mapping: "standard" }, GB)).toEqual({ confirm: [1], back: [0] });
+    // Without the standard layout, the buttons the player set as A and B.
+    const raw = { id: "8BitDo Lite 2 (Vendor: 2dc8 Product: 5112)", mapping: "" as const };
+    expect(menuButtons(raw, GB)).toEqual({ confirm: [1], back: [0] });
+    expect(menuButtons(raw, rebind(rebind(GB, "a", 0), "b", 1))).toEqual({ confirm: [0], back: [1] });
   });
 
   it("names pads without the browser's vendor details", () => {

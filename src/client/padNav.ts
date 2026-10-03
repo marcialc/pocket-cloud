@@ -6,10 +6,10 @@
  * shows the focus, and the mouse, a touch or a key hides it again.
  *
  * Stands aside while the controller is playing a game (a game on screen with no
- * dialog over it) and while a dialog is waiting for a button to bind
- * (`data-pad-capture`).
+ * dialog over it) and while a panel takes its buttons itself (`data-pad-capture`:
+ * Controls, where they get bound).
  */
-import { menuButtons, pollGamepads, pressedIndexes } from "./emulator/gamepad";
+import { menuButtons, pollGamepads, pressedIndexes, type PadBindings } from "./emulator/gamepad";
 
 type Direction = "up" | "down" | "left" | "right";
 
@@ -154,8 +154,12 @@ function back(scope: HTMLElement) {
   target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
 }
 
-/** Starts listening to controllers for moving around the app. Returns a stop function. */
-export function bindPadNavigation(target: Window = window): () => void {
+/**
+ * Starts listening to controllers for moving around the app. `bindings`: the
+ * player's Game Boy controller buttons, whose A and B pick and go back on pads
+ * without the standard layout. Returns a stop function.
+ */
+export function bindPadNavigation(bindings: () => PadBindings, target: Window = window): () => void {
   const root = target.document.documentElement;
   // Buttons held last frame, as "pad:index", so only fresh presses act.
   let down = new Set<string>();
@@ -179,13 +183,13 @@ export function bindPadNavigation(target: Window = window): () => void {
     for (const pad of pads) {
       const pressed = pressedIndexes(pad);
       for (const d of directionsHeld(pad, pressed)) held.add(d);
-      const { confirm: a, back: b } = menuButtons(pad);
+      const { confirm: a, back: b } = menuButtons(pad, bindings());
       for (const i of pressed) {
         const key = `${pad.index}:${i}`;
         nowDown.add(key);
         if (down.has(key)) continue;
-        if (i === a) fresh.push("confirm");
-        if (i === b) fresh.push("back");
+        if (a.includes(i)) fresh.push("confirm");
+        else if (b.includes(i)) fresh.push("back");
       }
     }
     down = nowDown;

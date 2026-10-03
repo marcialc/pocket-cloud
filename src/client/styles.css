@@ -358,6 +358,9 @@ kbd.empty { color: var(--ink-2); }
   transition: transform 90ms steps(2);
 }
 .game-card:hover { transform: translateY(-3px); }
+/* Picked with a controller: the whole card, lifted as on hover. */
+[data-input="pad"] .game-card-play:focus { outline: none; }
+[data-input="pad"] .game-card:has(.game-card-play:focus) { transform: translateY(-3px); outline: 3px solid var(--accent); outline-offset: 3px; }
 /* The label grows to the card's height, so every label in a row ends at the same line. */
 .game-card-play {
   flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; text-align: left; border-radius: 6px;

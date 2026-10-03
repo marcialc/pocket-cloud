@@ -157,10 +157,6 @@ export function ControlsPanel({
     if (showPad && listening) assign(padBindings, index, `the controller's ${padButtonName(pad, index)}`, onPadChange);
   };
 
-  // Controller buttons held when a button was picked (the A that picked it), as "pad:button":
-  // they bind only once let go and pressed again.
-  const heldAtPick = useRef(new Set<string>());
-
   useEffect(() => {
     // Controller buttons held last frame, as "pad:button", so only fresh presses bind.
     let down = new Set<string>();
@@ -177,10 +173,9 @@ export function ControlsPanel({
         for (const i of pressedIndexes(pad)) {
           const k = `${pad.index}:${i}`;
           now.add(k);
-          if (!down.has(k) && !heldAtPick.current.has(k)) fresh ??= [pad, i];
+          if (!down.has(k)) fresh ??= [pad, i];
         }
       down = now;
-      for (const k of heldAtPick.current) if (!now.has(k)) heldAtPick.current.delete(k);
       // One per frame: the next only sees the new bindings after a render.
       if (fresh) onPadPress.current(...fresh);
     });
@@ -247,9 +242,6 @@ export function ControlsPanel({
   }, [listening, bindings, showPad, onChange, onClose]);
 
   const pick = (button: PadAction) => {
-    heldAtPick.current = new Set(
-      (navigator.getGamepads?.() ?? []).flatMap((pad) => (pad?.connected ? pressedIndexes(pad).map((i) => `${pad.index}:${i}`) : [])),
-    );
     setNotice(null);
     setListening(listening === button ? null : button);
     document.getElementById(`bind-${button}`)?.focus();
@@ -383,7 +375,8 @@ export function ControlsPanel({
         </div>
       )}
 
-      <div className="pad-diagram" aria-label="Handheld buttons" role="group">
+      {/* Controllers don't move around this panel (padNav.ts): their buttons light up the drawing and get bound. */}
+      <div className="pad-diagram" aria-label="Handheld buttons" role="group" data-pad-capture>
         <span className="pad-well" aria-hidden />
         <span className="pad-hub" aria-hidden />
         {buttons.map((b) => {
@@ -420,12 +413,12 @@ export function ControlsPanel({
         </div>
       )}
 
-      <ul className="bind-list" data-pad-capture={showPad && listening ? "" : undefined}>
+      <ul className="bind-list">
         {listOrder(buttons).map(bindRow)}
       </ul>
       {showPad && (
         <>
-          <ul className="bind-list" data-pad-capture={listening ? "" : undefined}>{bindRow(MENU)}</ul>
+          <ul className="bind-list">{bindRow(MENU)}</ul>
           <p className="fine">Menu opens the menu over a game, with the way back to your games.</p>
         </>
       )}

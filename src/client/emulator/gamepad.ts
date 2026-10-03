@@ -233,12 +233,13 @@ const NINTENDO_NAMES = ["B", "A", "Y", "X", "L", "R", "ZL", "ZR", "−", "+", "L
 const XBOX_NAMES = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "LS", "RS", ...DPAD_NAMES, "Guide"];
 
 /**
- * Buttons that pick and go back in menus, by what's printed on them: the A
- * button picks, B goes back. Pads without the standard layout get the default
- * game buttons' positions (right picks, bottom goes back).
+ * Buttons that pick and go back in menus: on the standard layout, by what's
+ * printed on them (A picks, B goes back). Other pads number their buttons their
+ * own way, so the ones the player set as A and B for games (`bindings`).
  */
-export function menuButtons(pad: Pick<Gamepad, "id" | "mapping">): { confirm: number; back: number } {
-  return pad.mapping === "standard" && !NINTENDO.test(pad.id) ? { confirm: 0, back: 1 } : { confirm: 1, back: 0 };
+export function menuButtons(pad: Pick<Gamepad, "id" | "mapping">, bindings: PadBindings): { confirm: number[]; back: number[] } {
+  if (pad.mapping !== "standard") return { confirm: bindings.a ?? [], back: bindings.b ?? [] };
+  return NINTENDO.test(pad.id) ? { confirm: [1], back: [0] } : { confirm: [0], back: [1] };
 }
 
 /**

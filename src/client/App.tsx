@@ -98,7 +98,9 @@ export function App() {
   }, [prefs.reduceMotion]);
   useEffect(() => (prefs.uiSounds ? bindUiSounds() : undefined), [prefs.uiSounds]);
   // Controllers move around the menus everywhere (games take them back while playing).
-  useEffect(() => bindPadNavigation(), []);
+  const padBindings = useRef(prefs.padControls.gb);
+  padBindings.current = prefs.padControls.gb;
+  useEffect(() => bindPadNavigation(() => padBindings.current), []);
 
   const refreshLibrary = useCallback(function refresh() {
     // The shelf shows only the signed-in account's games, so wait until it's known who that is.
