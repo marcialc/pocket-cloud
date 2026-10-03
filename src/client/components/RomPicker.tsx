@@ -490,6 +490,7 @@ export function RomPicker({
                   <button
                     type="button"
                     className="game-card-play"
+                    data-pad-target
                     disabled={!!busy}
                     onClick={() => onPlayStored(rom.romHash)}
                     aria-label={`Play ${rom.title}, ${rom.onDevice ? `played ${formatWhen(rom.lastPlayedAt)}` : "not played on this device"}${sync ? `, ${sync.label.toLowerCase()}` : ""}`}

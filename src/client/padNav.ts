@@ -1,8 +1,9 @@
 /**
  * Moving around the app with a game controller, like a console menu: the D-pad
  * (or left stick) moves the focus to the nearest control that way, A picks it,
- * B goes back (Escape). Nothing to switch on: the first press shows the focus,
- * and the mouse, a touch or a key hides it again.
+ * B goes back (Escape). On the library page it only visits the games
+ * (`data-pad-target`), and A plays one. Nothing to switch on: the first press
+ * shows the focus, and the mouse, a touch or a key hides it again.
  *
  * Stands aside while the controller is playing a game (a game on screen with no
  * dialog over it) and while a dialog is waiting for a button to bind
@@ -51,9 +52,14 @@ function shown(el: HTMLElement): boolean {
   return getComputedStyle(el).visibility !== "hidden";
 }
 
-/** Controls the focus can land on inside `scope`, in page order. */
+/**
+ * Controls the focus can land on inside `scope`, in page order. Where some are
+ * marked `data-pad-target` (the library's games), only those: the controller
+ * goes from game to game, not through every button on each card.
+ */
 export function focusables(scope: HTMLElement): HTMLElement[] {
-  return [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+  const targets = scope.querySelectorAll<HTMLElement>("[data-pad-target]");
+  return [...(targets.length ? targets : scope.querySelectorAll<HTMLElement>(FOCUSABLE))].filter(
     (el) => !(el as HTMLButtonElement).disabled && shown(el),
   );
 }
