@@ -92,14 +92,32 @@ export async function handleLink(request: Request, env: Env, url: URL, playerId:
       if ("error" in read) return json({ error: read.error }, 400);
       // `ask` is for this Worker only; the link server gets the rest.
       const { ask: asking, ...plug } = read;
+      // One line per plug: what was sent and what the link server made of it (ids shortened).
+      const logged = {
+        message: "link plug request",
+        player: playerId.slice(0, 8),
+        friend: friendId.slice(0, 8),
+        romHash: plug.romHash.slice(0, 8),
+        stateSent: plug.state !== undefined,
+        stateBytes: base64Bytes(plug.state),
+        sramSent: plug.sram !== undefined,
+        sramBytes: base64Bytes(plug.sram),
+        ask: asking ?? false,
+      };
       // The link server loads each player's own copy; nobody's ROM goes to anyone else.
       const mine = await romGame(env, playerId, plug.romHash);
-      if (!mine) return json({ error: "rom_not_in_library" }, 409);
+      if (!mine) {
+        console.log(JSON.stringify({ ...logged, gameCode: null, error: "rom_not_in_library" }));
+        return json({ error: "rom_not_in_library" }, 409);
+      }
       const social = socialStub(env);
       let ask = asking ?? false;
       const refusal = await plugRefusal(env, env.LINK, playerId, friendId, mine, ask);
       if (refusal) {
-        if (!(await saveWaitingIn(env.LINK, playerId, friendId, plug.romHash))) return json({ error: refusal }, 409);
+        if (!(await saveWaitingIn(env.LINK, playerId, friendId, plug.romHash))) {
+          console.log(JSON.stringify({ ...logged, gameCode: mine.gameCode ?? null, refusal, error: refusal }));
+          return json({ error: refusal }, 409);
+        }
         // Picking up the save from your last link: always allowed, and nobody is asked.
         ask = false;
       }
@@ -112,6 +130,16 @@ export async function handleLink(request: Request, env: Env, url: URL, playerId:
       // Whatever the answer, the room may now hold a seat or a save: the Link panel keeps asking about it.
       await social.noteLinkRoom(playerId, friendId);
       const seen = view(await response.json<LinkRoomStatus>(), playerId, friendId);
+      console.log(
+        JSON.stringify({
+          ...logged,
+          gameCode: mine.gameCode ?? null,
+          ...(refusal ? { refusal } : {}),
+          linkStatus: response.status,
+          // Not saveWaiting: it's a full ROM hash.
+          link: "error" in seen ? { error: seen.error } : { state: seen.state, slot: seen.slot, friendPluggedIn: seen.friendPluggedIn },
+        }),
+      );
       if (!response.ok || "error" in seen) return json(seen, response.status);
       // The friend was already waiting: the link starts, nobody needs asking.
       const asked = ask && seen.state === "waiting" && !seen.friendPluggedIn;
@@ -283,6 +311,13 @@ async function readPlug(request: Request): Promise<(Plug & { ask?: boolean }) | 
     plug.state = body.state;
   }
   return plug;
+}
+
+/** How many bytes a base64 string holds, without decoding it (0 for none). */
+function base64Bytes(value: string | undefined): number {
+  if (!value) return 0;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.floor((value.length * 3) / 4) - padding;
 }
 
 function fitsBase64(value: unknown, maxBytes: number): value is string {

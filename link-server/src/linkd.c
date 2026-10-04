@@ -31,6 +31,10 @@
  *       GET  /players/N/save       the save (stopped only)
  *       GET  /players/N/state      a snapshot of where the game was left
  *                                  (stopped only)
+ *       GET  /log                  the log lines since the last GET /log,
+ *                                  one per line (the link room logs them:
+ *                                  the container's own output doesn't reach
+ *                                  Workers Logs)
  *     Files go to the work directory (default /tmp/linkd). Snapshots are
  *     mGBA's own (the app's RetroArch core's, unwrapped), battery save
  *     included; the battery save sent with one is the one it holds.
@@ -66,6 +70,7 @@
 #include <mgba/core/serialize.h>
 #include <mgba/core/thread.h>
 #include <mgba/internal/gba/gba.h>
+#include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/sio.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 #include <mgba-util/audio-buffer.h>
@@ -77,6 +82,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,6 +107,16 @@
 #define SENT_RING 64
 /* How often each player's stream stats are logged. */
 #define STATS_SECONDS 10
+/* How often each player's link summary is logged, in frames (about 5 s), and
+ * how many link mode changes are logged per player between two summaries
+ * (the rest are only counted). */
+#define SUMMARY_FRAMES 300
+#define MODE_CHANGE_LOGS 10
+/* Warnings from mGBA's serial port code logged per player, at most. */
+#define SIO_WARNING_LOGS 50
+/* Log lines kept for GET /log; older ones are dropped (and counted). */
+#define LOG_LINES 512
+#define LOG_LINE_BYTES 384
 
 /* Where linktest.gba writes its results; keep in sync with its RESULT_*. */
 #define RESULT_ADDRESS 0x02000000
@@ -130,6 +146,25 @@ struct Player {
 	struct GBASIOLockstepDriver driver;
 	/* The cable is in this GBA's port (set by onReset). */
 	atomic_bool pluggedIn;
+
+	/* Diagnostics. The lockstep driver's own functions, wrapped to log what
+	 * the cable does; how the game started; and, since the last summary,
+	 * transfers the parent started (refused: the driver wouldn't, as for
+	 * the child or with nobody else on the cable) and finished, and link
+	 * mode changes. All on this player's core thread. */
+	bool (*driverInit)(struct GBASIODriver* driver);
+	void (*driverDeinit)(struct GBASIODriver* driver);
+	void (*driverSetMode)(struct GBASIODriver* driver, enum GBASIOMode mode);
+	bool (*driverStart)(struct GBASIODriver* driver);
+	void (*driverFinishMultiplayer)(struct GBASIODriver* driver, uint16_t data[4]);
+	enum GBASIOMode linkMode;
+	const char* startedFrom;
+	long snapshotBytes;
+	unsigned transfersStarted;
+	unsigned transfersRefused;
+	unsigned transfersFinished;
+	unsigned modeChanges;
+	unsigned modeChangesUnlogged;
 	mColor* video;
 	unsigned width;
 	unsigned height;
@@ -164,12 +199,59 @@ static bool realtime;
 static bool readResults;
 static bool streaming;
 
+/* Log lines, written to stderr and kept for GET /log. */
+static pthread_mutex_t logLock = PTHREAD_MUTEX_INITIALIZER;
+static char logRing[LOG_LINES][LOG_LINE_BYTES];
+static uint64_t logWritten;
+static uint64_t logRead;
+
+__attribute__((format(printf, 1, 2))) static void logLine(const char* format, ...) {
+	char line[LOG_LINE_BYTES];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(line, sizeof(line), format, args);
+	va_end(args);
+	fprintf(stderr, "%s\n", line);
+	pthread_mutex_lock(&logLock);
+	memcpy(logRing[logWritten % LOG_LINES], line, sizeof(line));
+	++logWritten;
+	pthread_mutex_unlock(&logLock);
+}
+
+/* The lines logged since the last call, one per line. */
+static uint8_t* takeLog(size_t* length) {
+	pthread_mutex_lock(&logLock);
+	uint64_t dropped = 0;
+	if (logWritten - logRead > LOG_LINES) {
+		dropped = logWritten - LOG_LINES - logRead;
+		logRead = logWritten - LOG_LINES;
+	}
+	size_t capacity = (size_t) (logWritten - logRead) * (LOG_LINE_BYTES + 1) + 64;
+	char* text = malloc(capacity);
+	size_t at = 0;
+	if (dropped) {
+		at += (size_t) snprintf(text, capacity, "(%llu log lines dropped)\n", (unsigned long long) dropped);
+	}
+	for (; logRead < logWritten; ++logRead) {
+		at += (size_t) snprintf(text + at, capacity - at, "%s\n", logRing[logRead % LOG_LINES]);
+	}
+	pthread_mutex_unlock(&logLock);
+	*length = at;
+	return (uint8_t*) text;
+}
+
+static atomic_int sioWarnings;
+
+/* Errors, plus mGBA's warnings about the serial port (a few per session),
+ * which say when the cable isn't doing what a game expects. */
 static void quietLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args) {
 	(void) logger;
-	if (level & (mLOG_FATAL | mLOG_ERROR)) {
-		fprintf(stderr, "[%s] ", mLogCategoryName(category));
-		vfprintf(stderr, format, args);
-		fputc('\n', stderr);
+	bool sioWarning = category == _mLOG_CAT_GBA_SIO && (level & (mLOG_WARN | mLOG_GAME_ERROR)) &&
+	                  atomic_fetch_add(&sioWarnings, 1) < SIO_WARNING_LOGS * PLAYERS;
+	if ((level & (mLOG_FATAL | mLOG_ERROR)) || sioWarning) {
+		char message[LOG_LINE_BYTES];
+		vsnprintf(message, sizeof(message), format, args);
+		logLine("[%s] %s", mLogCategoryName(category), message);
 	}
 }
 
@@ -181,11 +263,154 @@ static int requestedId(struct mLockstepUser* user) {
 	return player->index;
 }
 
+static const char* modeName(enum GBASIOMode mode) {
+	switch (mode) {
+	case GBA_SIO_NORMAL_8:
+		return "NORMAL8";
+	case GBA_SIO_NORMAL_32:
+		return "NORMAL32";
+	case GBA_SIO_MULTI:
+		return "MULTI";
+	case GBA_SIO_UART:
+		return "UART";
+	case GBA_SIO_GPIO:
+		return "GPIO";
+	case GBA_SIO_JOYBUS:
+		return "JOYBUS";
+	default:
+		return (int) mode == -1 ? "none" : "unknown";
+	}
+}
+
+static struct Player* driverPlayer(struct GBASIODriver* driver) {
+	struct GBASIOLockstepDriver* lockstep = (struct GBASIOLockstepDriver*) driver;
+	return ((struct mLockstepThreadUser*) lockstep->user)->thread->userData;
+}
+
+/* What the lockstep coordinator knows about this player, for the logs: its
+ * place on the cable, how many GBAs are on it, the link mode it last heard
+ * from each, and whether it counts everyone ready (SD), as one line. */
+static void describeLink(struct Player* player, char* text, size_t size) {
+	MutexLock(&coordinator.mutex);
+	struct GBASIOLockstepPlayer* on =
+	    player->driver.lockstepId ? TableLookup(&coordinator.players, player->driver.lockstepId) : NULL;
+	if (!on) {
+		snprintf(text, size, "lockstep=none attached=%d", coordinator.nAttached);
+	} else {
+		bool ready = true;
+		for (int i = 0; ready && i < coordinator.nAttached; ++i) {
+			ready = on->otherModes[i] == on->mode;
+		}
+		snprintf(text, size,
+		         "lockstep_id=%u cable_id=%d attached=%d lockstep_mode=%s heard=%s,%s ready=%s transfer_active=%d "
+		         "asleep=%d",
+		         player->driver.lockstepId, on->playerId, coordinator.nAttached, modeName(on->mode),
+		         modeName(on->otherModes[0]), modeName(on->otherModes[1]), ready ? "yes" : "no",
+		         coordinator.transferActive, on->asleep);
+	}
+	MutexUnlock(&coordinator.mutex);
+}
+
+static struct GBASIO* playerSio(struct Player* player) {
+	return &((struct GBA*) player->core->board)->sio;
+}
+
+/* Plugging the cable in (setPeripheral) puts this GBA on the coordinator. */
+static bool diagInit(struct GBASIODriver* driver) {
+	struct Player* player = driverPlayer(driver);
+	bool ok = player->driverInit(driver);
+	char link[256];
+	describeLink(player, link, sizeof(link));
+	logLine("player %d: coordinator attached ok=%d frame=%u %s", player->index + 1, ok, atomic_load(&player->frames),
+	        link);
+	return ok;
+}
+
+static void diagDeinit(struct GBASIODriver* driver) {
+	struct Player* player = driverPlayer(driver);
+	unsigned id = player->driver.lockstepId;
+	player->driverDeinit(driver);
+	MutexLock(&coordinator.mutex);
+	int attached = coordinator.nAttached;
+	MutexUnlock(&coordinator.mutex);
+	logLine("player %d: coordinator detached lockstep_id=%u attached=%d", player->index + 1, id, attached);
+}
+
+static void diagSetMode(struct GBASIODriver* driver, enum GBASIOMode mode) {
+	struct Player* player = driverPlayer(driver);
+	player->driverSetMode(driver, mode);
+	if (mode == player->linkMode) {
+		return;
+	}
+	if (player->modeChanges++ < MODE_CHANGE_LOGS) {
+		struct GBASIO* sio = playerSio(player);
+		logLine("player %d: sio mode %s -> %s frame=%u siocnt=%04x rcnt=%04x", player->index + 1,
+		        modeName(player->linkMode), modeName(mode), atomic_load(&player->frames), sio->siocnt, sio->rcnt);
+	} else {
+		++player->modeChangesUnlogged;
+	}
+	player->linkMode = mode;
+}
+
+static bool diagStart(struct GBASIODriver* driver) {
+	struct Player* player = driverPlayer(driver);
+	bool started = player->driverStart(driver);
+	if (started) {
+		++player->transfersStarted;
+	} else {
+		++player->transfersRefused;
+	}
+	return started;
+}
+
+static void diagFinishMultiplayer(struct GBASIODriver* driver, uint16_t data[4]) {
+	struct Player* player = driverPlayer(driver);
+	player->driverFinishMultiplayer(driver, data);
+	++player->transfersFinished;
+}
+
+/* Called with the coordinator locked: no describeLink here. */
+static void diagPlayerIdChanged(struct mLockstepUser* user, int id) {
+	struct Player* player = ((struct mLockstepThreadUser*) user)->thread->userData;
+	logLine("player %d: cable id now %d", player->index + 1, id);
+}
+
+/* Every SUMMARY_FRAMES: the link as this GBA sees it. */
+static void logSummary(struct Player* player) {
+	struct GBASIO* sio = playerSio(player);
+	const uint16_t* io = ((struct GBA*) player->core->board)->memory.io;
+	char link[256];
+	describeLink(player, link, sizeof(link));
+	logLine("player %d: summary frame=%u mode=%s siocnt=%04x rcnt=%04x multi=%04x,%04x,%04x,%04x started=%u refused=%u "
+	        "finished=%u mode_changes=%u unlogged=%u %s",
+	        player->index + 1, atomic_load(&player->frames), modeName(sio->mode), sio->siocnt, sio->rcnt,
+	        io[GBA_REG_SIOMULTI0 >> 1], io[GBA_REG_SIOMULTI1 >> 1], io[GBA_REG_SIOMULTI2 >> 1],
+	        io[GBA_REG_SIOMULTI3 >> 1], player->transfersStarted, player->transfersRefused, player->transfersFinished,
+	        player->modeChanges, player->modeChangesUnlogged, link);
+	player->transfersStarted = 0;
+	player->transfersRefused = 0;
+	player->transfersFinished = 0;
+	player->modeChanges = 0;
+	player->modeChangesUnlogged = 0;
+}
+
 static void onStart(struct mCoreThread* thread) {
 	struct Player* player = thread->userData;
 	mLockstepThreadUserInit(&player->user, thread);
 	player->user.d.requestedId = requestedId;
+	player->user.d.playerIdChanged = diagPlayerIdChanged;
 	GBASIOLockstepDriverCreate(&player->driver, &player->user.d);
+	player->driverInit = player->driver.d.init;
+	player->driverDeinit = player->driver.d.deinit;
+	player->driverSetMode = player->driver.d.setMode;
+	player->driverStart = player->driver.d.start;
+	player->driverFinishMultiplayer = player->driver.d.finishMultiplayer;
+	player->driver.d.init = diagInit;
+	player->driver.d.deinit = diagDeinit;
+	player->driver.d.setMode = diagSetMode;
+	player->driver.d.start = diagStart;
+	player->driver.d.finishMultiplayer = diagFinishMultiplayer;
+	player->linkMode = (enum GBASIOMode) -1;
 	GBASIOLockstepCoordinatorAttach(&coordinator, &player->driver);
 	clock_gettime(CLOCK_MONOTONIC, &player->nextFrame);
 	/* The cable goes into the port in onReset, once the game is where it
@@ -295,6 +520,8 @@ static void endTransfer(struct mCore* core) {
 /* Carries on from the snapshot sent for this player, if any; a snapshot that
  * doesn't load leaves the game powered on as usual. */
 static void loadSnapshot(struct Player* player, struct mCore* core) {
+	player->startedFrom = "save";
+	player->snapshotBytes = 0;
 	if (!player->statePath) {
 		return;
 	}
@@ -302,6 +529,7 @@ static void loadSnapshot(struct Player* player, struct mCore* core) {
 	if (!vf) {
 		return;
 	}
+	player->snapshotBytes = (long) vf->size(vf);
 	if (vf->size(vf) <= 0) {
 		vf->close(vf);
 		return;
@@ -310,11 +538,26 @@ static void loadSnapshot(struct Player* player, struct mCore* core) {
 	vf->close(vf);
 	if (loaded) {
 		endTransfer(core);
-		fprintf(stderr, "player %d: carrying on from the snapshot\n", player->index + 1);
+		player->startedFrom = "snapshot";
+		logLine("player %d: carrying on from the snapshot", player->index + 1);
 	} else {
-		fprintf(stderr, "player %d: couldn't load the snapshot, powering on instead\n", player->index + 1);
+		player->startedFrom = "save_snapshot_failed";
+		logLine("player %d: couldn't load the snapshot, powering on instead", player->index + 1);
 		core->reset(core);
 	}
+}
+
+/* After the cable goes in, or a reset with it in: where the game started from
+ * and what the cable looks like to it. */
+static void logPlugged(struct Player* player, const char* event) {
+	struct GBASIO* sio = playerSio(player);
+	char link[256];
+	describeLink(player, link, sizeof(link));
+	logLine("player %d: %s from=%s snapshot_bytes=%ld frame=%u mode=%s requested_id=%d device_id=%d siocnt=%04x "
+	        "rcnt=%04x si=%d %s",
+	        player->index + 1, event, player->startedFrom, player->snapshotBytes, atomic_load(&player->frames),
+	        modeName(sio->mode), requestedId(&player->user.d), player->driver.d.deviceId(&player->driver.d), sio->siocnt,
+	        sio->rcnt, (int) GBASIORegisterRCNTGetSi(sio->rcnt), link);
 }
 
 /* After power-on: carry on from the snapshot, then plug the cable in. With
@@ -326,6 +569,9 @@ static void onReset(struct mCoreThread* thread) {
 	/* A reset while linked (MSG_RESET): powered on again from the save, with
 	 * the cable still in; resetting the GBA resets the cable too. */
 	if (atomic_load(&player->pluggedIn)) {
+		player->startedFrom = "save";
+		player->snapshotBytes = 0;
+		logPlugged(player, "powered on again");
 		return;
 	}
 	loadSnapshot(player, thread->core);
@@ -343,6 +589,7 @@ static void onReset(struct mCoreThread* thread) {
 	if (mode == GBA_SIO_MULTI) {
 		sio->rcnt = GBASIORegisterRCNTSetSi(sio->rcnt, player->driver.d.deviceId(&player->driver.d) != 0);
 	}
+	logPlugged(player, "plugged in");
 	atomic_store(&player->pluggedIn, true);
 }
 
@@ -358,7 +605,9 @@ static void onFrame(struct mCoreThread* thread) {
 		thread->core->setKeys(thread->core, keys);
 		publishFrame(player);
 	}
-	atomic_fetch_add(&player->frames, 1);
+	if ((atomic_fetch_add(&player->frames, 1) + 1) % SUMMARY_FRAMES == 0) {
+		logSummary(player);
+	}
 
 	if (realtime) {
 		player->nextFrame.tv_nsec += FRAME_NS;
@@ -373,7 +622,7 @@ static void onFrame(struct mCoreThread* thread) {
 static bool setUpPlayer(struct Player* player) {
 	player->core = mCoreFind(player->romPath);
 	if (!player->core || !player->core->init(player->core)) {
-		fprintf(stderr, "player %d: %s isn't a game mGBA can run\n", player->index + 1, player->romPath);
+		logLine("player %d: %s isn't a game mGBA can run", player->index + 1, player->romPath);
 		return false;
 	}
 	mCoreInitConfig(player->core, NULL);
@@ -385,12 +634,12 @@ static bool setUpPlayer(struct Player* player) {
 	pthread_cond_init(&player->frameReady, NULL);
 
 	if (!mCoreLoadFile(player->core, player->romPath)) {
-		fprintf(stderr, "player %d: couldn't load %s\n", player->index + 1, player->romPath);
+		logLine("player %d: couldn't load %s", player->index + 1, player->romPath);
 		return false;
 	}
 	struct VFile* save = VFileOpen(player->savePath, O_CREAT | O_RDWR);
 	if (!save || !player->core->loadSave(player->core, save)) {
-		fprintf(stderr, "player %d: couldn't open save %s\n", player->index + 1, player->savePath);
+		logLine("player %d: couldn't open save %s", player->index + 1, player->savePath);
 		return false;
 	}
 
@@ -506,9 +755,8 @@ static void* viewerSendThread(void* arg) {
 			unsigned waits = atomic_exchange(&viewer->drawnWaitCount, 0);
 			uint64_t waitSum = atomic_exchange(&viewer->drawnWaitSum, 0);
 			uint64_t waitMax = atomic_exchange(&viewer->drawnWaitMax, 0);
-			fprintf(stderr,
-			        "player %d stream: game %.1f fps, sent %.1f fps, skipped %u for the client to catch up, %.0f kbit/s, "
-			        "sent to drawn avg %.0f ms max %.0f ms\n",
+			logLine("player %d stream: game %.1f fps, sent %.1f fps, skipped %u for the client to catch up, %.0f kbit/s, "
+			        "sent to drawn avg %.0f ms max %.0f ms",
 			        player->index + 1, (games - gameFrames) / elapsed, sentFrames / elapsed, skippedFrames,
 			        sentBytes * 8 / elapsed / 1000, waits ? (double) waitSum / waits / 1e6 : 0, (double) waitMax / 1e6);
 			gameFrames = games;
@@ -610,7 +858,7 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 	if (!addViewer(&viewer)) {
 		return;
 	}
-	fprintf(stderr, "player %d: connected\n", index);
+	logLine("player %d: connected", index);
 
 	uint8_t hello[6] = { MSG_HELLO, (uint8_t) index };
 	putU16(hello + 2, player->width);
@@ -640,16 +888,15 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 			}
 		} else if (message[0] == MSG_CLIENT_STATS && length == 14) {
 			unsigned flags = message[13];
-			fprintf(stderr,
-			        "player %d client: %u frames in, %u drawn, arrival to drawn avg %u ms max %u ms, ping avg %u ms max %u ms, "
-			        "%s, tab %s\n",
+			logLine("player %d client: %u frames in, %u drawn, arrival to drawn avg %u ms max %u ms, ping avg %u ms max %u ms, "
+			        "%s, tab %s",
 			        index, getU16(message + 1), getU16(message + 3), getU16(message + 5), getU16(message + 7),
 			        getU16(message + 9), getU16(message + 11), (flags & 2) ? "touch" : "no touch",
 			        (flags & 1) ? "hidden" : "visible");
 		} else if (message[0] == MSG_PING && length == 9) {
 			wsSend(conn, message, length, NULL, 0);
 		} else if (message[0] == MSG_RESET && length == 1) {
-			fprintf(stderr, "player %d: reset\n", index);
+			logLine("player %d: reset requested frame=%u", index, atomic_load(&player->frames));
 			mCoreThreadReset(&player->thread);
 		}
 	}
@@ -662,7 +909,7 @@ static void onSocket(struct WsConn* conn, const char* path, void* context) {
 	pthread_mutex_unlock(&player->frameLock);
 	pthread_join(sender, NULL);
 	removeViewer(&viewer);
-	fprintf(stderr, "player %d: disconnected\n", index);
+	logLine("player %d: disconnected", index);
 }
 
 static bool writeFile(const char* path, const uint8_t* data, size_t length);
@@ -676,7 +923,7 @@ static bool startSession(void) {
 	for (int i = 0; i < PLAYERS; ++i) {
 		atomic_store(&players[i].pluggedIn, false);
 		if (!mCoreThreadStart(&players[i].thread)) {
-			fprintf(stderr, "player %d: couldn't start\n", i + 1);
+			logLine("player %d: couldn't start", i + 1);
 			return false;
 		}
 		/* One at a time: the first on the cable is the parent until the
@@ -685,7 +932,7 @@ static bool startSession(void) {
 		struct timespec poll = { 0, 1000000L };
 		for (int waited = 0; !atomic_load(&players[i].pluggedIn); ++waited) {
 			if (waited == 10000) {
-				fprintf(stderr, "player %d: the cable never went in\n", i + 1);
+				logLine("player %d: the cable never went in", i + 1);
 				return false;
 			}
 			nanosleep(&poll, NULL);
@@ -725,19 +972,19 @@ static void stopSession(void) {
 		endTransfer(players[i].core);
 		struct VFile* state = players[i].statePath ? VFileOpen(players[i].statePath, O_CREAT | O_TRUNC | O_RDWR) : NULL;
 		if (players[i].statePath && (!state || !mCoreSaveStateNamed(players[i].core, state, SAVESTATE_SAVEDATA | SAVESTATE_RTC))) {
-			fprintf(stderr, "player %d: couldn't take a snapshot\n", i + 1);
+			logLine("player %d: couldn't take a snapshot", i + 1);
 		}
 		if (state) {
 			state->close(state);
 		}
 		players[i].core->deinit(players[i].core);
 		if (size && !writeFile(players[i].savePath, sram, size)) {
-			fprintf(stderr, "player %d: couldn't trim the save\n", i + 1);
+			logLine("player %d: couldn't trim the save", i + 1);
 		}
 		free(sram);
 	}
 	GBASIOLockstepCoordinatorDeinit(&coordinator);
-	fprintf(stderr, "session stopped, saves and snapshots written\n");
+	logLine("session stopped, saves and snapshots written");
 }
 
 static bool writeFile(const char* path, const uint8_t* data, size_t length) {
@@ -787,6 +1034,12 @@ static bool onHttp(const char* method, const char* path, const uint8_t* body, si
 	}
 	pthread_mutex_unlock(&sessionLock);
 
+	if (!strcmp(path, "/log") && !strcmp(method, "GET")) {
+		response->status = 200;
+		response->contentType = "text/plain; charset=utf-8";
+		response->body = takeLog(&response->length);
+		return true;
+	}
 	if (!strcmp(path, "/status")) {
 		static const char* names[] = { "waiting", "running", "stopped" };
 		char text[96];
@@ -939,6 +1192,11 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
+	/* Line by line even into a pipe (the container's log), so nothing sits in
+	 * a buffer until exit. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
+	setvbuf(stderr, NULL, _IONBF, 0);
+
 	readResults = checkTest;
 	streaming = port > 0;
 	if (streaming) {
@@ -986,10 +1244,10 @@ int main(int argc, char** argv) {
 		pthread_t server;
 		pthread_create(&server, NULL, serveThread, &serveArgs);
 		pthread_detach(server);
-		fprintf(stderr, "listening on port %d%s\n", port, sessionMode ? ", waiting for games" : "");
+		logLine("listening on port %d%s", port, sessionMode ? ", waiting for games" : "");
 		int received;
 		sigwait(&stopSignals, &received);
-		fprintf(stderr, "stopping\n");
+		logLine("stopping");
 		stopSession();
 		return 0;
 	}

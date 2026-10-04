@@ -166,6 +166,7 @@ export class LinkRoom extends DurableObject<Env> {
     const seated = seats.find((seat) => seat.playerId === playerId);
     if (seated) {
       // Plugging in again (a reload, a second tab) keeps the same seat.
+      console.log(JSON.stringify({ message: "link plug again", room: this.logId(), slot: seated.slot, state }));
       return json({ slot: seated.slot, ...(await this.status()) });
     }
     if (seats.length >= 2) return json({ error: "room_full" }, 409);
@@ -181,13 +182,27 @@ export class LinkRoom extends DurableObject<Env> {
       since: Date.now(),
     });
     await this.ctx.storage.setAlarm(Date.now() + (starting ? this.checkEveryMs : this.waitMs));
+    console.log(
+      JSON.stringify({
+        message: "link plug",
+        room: this.logId(),
+        slot,
+        player: playerId.slice(0, 8),
+        romHash: body.romHash.slice(0, 8),
+        sramBytes: sram.length,
+        snapshotBytes: snapshot.length,
+        starting,
+      }),
+    );
     if (starting) {
       try {
         await this.startLink(seats);
         await this.ctx.storage.put({ state: "linked", since: Date.now() });
         await this.ctx.storage.delete("idleSince");
+        await this.relayLinkdLog();
       } catch (err) {
         console.error(JSON.stringify({ message: "link start failed", error: String(err) }));
+        await this.relayLinkdLog();
         await this.fail(err instanceof LinkError ? err.code : "start_failed");
       }
     }
@@ -198,6 +213,8 @@ export class LinkRoom extends DurableObject<Env> {
   private async startLink(seats: Seat[]): Promise<void> {
     const container = this.ctx.container;
     if (!container) throw new LinkError("no_container");
+    const startedAt = Date.now();
+    console.log(JSON.stringify({ message: "link container start", room: this.logId(), wasRunning: container.running }));
     if (!container.running) container.start();
     // The alarm keeps this object (and so the container) alive while linked;
     // this is a backstop in case it doesn't.
@@ -206,13 +223,28 @@ export class LinkRoom extends DurableObject<Env> {
     for (const seat of seats) {
       const rom = await this.env.ROMS.get(`roms/${seat.playerId}/${seat.romHash}`);
       if (!rom) throw new LinkError("rom_missing");
-      await this.linkd(`/players/${seat.slot}/rom`, { method: "PUT", body: await rom.arrayBuffer() });
+      const romBytes = await rom.arrayBuffer();
+      await this.linkd(`/players/${seat.slot}/rom`, { method: "PUT", body: romBytes });
       const sram = (await this.ctx.storage.get<Uint8Array>(`sram:${seat.slot}`)) ?? new Uint8Array(0);
       await this.linkd(`/players/${seat.slot}/save`, { method: "PUT", body: sram });
       const state = (await this.ctx.storage.get<Uint8Array>(`snapshot:${seat.slot}`)) ?? new Uint8Array(0);
-      await this.linkd(`/players/${seat.slot}/state`, { method: "PUT", body: await unpackState(state) });
+      const unpacked = await unpackState(state);
+      await this.linkd(`/players/${seat.slot}/state`, { method: "PUT", body: unpacked });
+      console.log(
+        JSON.stringify({
+          message: "link seat loaded",
+          room: this.logId(),
+          slot: seat.slot,
+          romBytes: romBytes.byteLength,
+          sramBytes: sram.length,
+          snapshot: unpacked.length > 0,
+          snapshotBytes: state.length,
+          unpackedSnapshotBytes: unpacked.length,
+        }),
+      );
     }
     await this.linkd("/start", { method: "POST" });
+    console.log(JSON.stringify({ message: "link started", room: this.logId(), ms: Date.now() - startedAt }));
   }
 
   /** linkd takes a moment to boot; its /status answers once it listens. */
@@ -286,6 +318,7 @@ export class LinkRoom extends DurableObject<Env> {
     } catch (err) {
       console.error(JSON.stringify({ message: "link end failed, saves lost", error: String(err) }));
     }
+    await this.relayLinkdLog();
     await this.stopContainer();
     await this.reset();
   }
@@ -312,6 +345,7 @@ export class LinkRoom extends DurableObject<Env> {
     } catch (err) {
       console.error(JSON.stringify({ message: "link check failed", error: String(err) }));
     }
+    await this.relayLinkdLog();
     if (watching > 0) {
       await this.ctx.storage.delete("idleSince");
     } else {
@@ -364,6 +398,31 @@ export class LinkRoom extends DurableObject<Env> {
     } catch (err) {
       console.error(JSON.stringify({ message: "container stop failed", error: String(err) }));
     }
+  }
+
+  /**
+   * linkd's log lines since the last call, into Workers Logs one by one
+   * (the container's own output doesn't reach them). Called after the start,
+   * on each check while linked and before the container stops; lines in
+   * between wait in linkd (it keeps the last 512).
+   */
+  private async relayLinkdLog(): Promise<void> {
+    if (!this.ctx.container?.running) return;
+    try {
+      const response = await this.port().fetch("http://linkd/log");
+      if (!response.ok) return;
+      const room = this.logId();
+      for (const line of (await response.text()).split("\n")) {
+        if (line) console.log(JSON.stringify({ message: "linkd", room, line }));
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ message: "linkd log relay failed", error: String(err) }));
+    }
+  }
+
+  /** A short id for this room in the logs, without the players' ids in its name. */
+  private logId(): string {
+    return this.ctx.id.toString().slice(0, 8);
   }
 
   private port(): Fetcher {
