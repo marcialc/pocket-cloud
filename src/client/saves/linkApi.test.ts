@@ -1,7 +1,7 @@
 import { unzlibSync, zlibSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64 } from "../../shared/api";
-import { LinkError, plugIn, takeLinkSave, unplug } from "./linkApi";
+import { LinkError, linkErrorMessage, plugIn, takeLinkSave, unplug } from "./linkApi";
 
 const ROM = "a".repeat(64);
 
@@ -69,5 +69,18 @@ describe("linkApi", () => {
   it("reports the server's refusal by its code", async () => {
     answer({ error: "rom_not_in_library" }, 409);
     await expect(plugIn("ABCD1234", ROM, null)).rejects.toEqual(new LinkError("rom_not_in_library"));
+  });
+
+  it("asks the friend to plug in too, and hands back the request's id", async () => {
+    const fetchMock = answer({ state: "waiting", slot: 1, friendPluggedIn: false, saveWaiting: null, requestId: "r-1" });
+    expect(await plugIn("ABCD1234", ROM, null, null, true)).toMatchObject({ requestId: "r-1" });
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ romHash: ROM, ask: true });
+  });
+
+  it("explains why a friend can't be linked with", () => {
+    const fallback = linkErrorMessage(new LinkError("something_new"));
+    for (const code of ["friend_offline", "friend_not_in_game", "games_cannot_link", "friend_not_looking", "friend_linked"]) {
+      expect(linkErrorMessage(new LinkError(code))).not.toBe(fallback);
+    }
   });
 });

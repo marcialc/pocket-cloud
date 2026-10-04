@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ListRomsResponse } from "../shared/api";
 import { EMPTY_SHELF, forgetGame, gameName, renameGame, sameShelf, type Shelf } from "../shared/shelf";
+import { GAME_CODE_PATTERN, type PresenceGame, type PutPresenceResponse } from "../shared/social";
 import { CloudPanel } from "./components/CloudPanel";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { FriendsPanel } from "./components/FriendsPanel";
@@ -20,6 +21,7 @@ import { removeCustomCover } from "./saves/customCovers";
 import { pushKeyBindings, syncKeyBindings } from "./saves/controlsSync";
 import { resetPlayerKey } from "./saves/identity";
 import { forgetUnsyncedShelf, pushShelf, syncShelf } from "./saves/shelfSync";
+import { clearPresence, presenceName, putPresence, SocialError } from "./saves/socialApi";
 import { clearInvite, takeInvite } from "./saves/invite";
 import { deleteResumeState } from "./saves/resumeStates";
 import {
@@ -68,6 +70,12 @@ type Stage =
   | { name: "play"; session: Session };
 
 const BLOCKED_MESSAGE = new DbBlockedError().message;
+
+/** Friends see this tab's presence under its own id, made up once per page load. */
+const TAB_ID = crypto.randomUUID();
+/** Heartbeats: often enough in a GBA game for link requests to arrive quickly, rarely otherwise. */
+const PRESENCE_MS = 30_000;
+const PRESENCE_GBA_MS = 5_000;
 
 export function App() {
   const [stage, setStage] = useState<Stage>({ name: "pick" });
@@ -204,6 +212,9 @@ export function App() {
   }, [playSignInCue]);
 
   const signedOut = useCallback(async (everywhere: boolean) => {
+    // While the session still works: friends stop seeing this tab. Waited for (signing out
+    // everywhere would end the session under it), but not for more than a couple of seconds.
+    await Promise.race([stopPresence.current?.(), new Promise((resolve) => setTimeout(resolve, 2000))]);
     await signOut(everywhere);
     await clearCloudSyncState();
     resetBackUpState();
@@ -303,6 +314,75 @@ export function App() {
   useEffect(() => {
     if (account === null) adoptLegacyNames(loadPreferences().shelf).catch(warnLegacyNames);
   }, [account, adoptLegacyNames]);
+
+  // Presence: while signed in, tell friends whether this tab is in a game (and which) or on the games page.
+  const playing = stage.name === "play" ? stage.session.rom : null;
+  const presenceGame = useMemo((): PresenceGame | null => {
+    if (!playing) return null;
+    const { romHash, gameCode } = playing;
+    const name = presenceName(gameName(prefs.shelf, romHash) ?? displayName(playing));
+    return gameCode && GAME_CODE_PATTERN.test(gameCode) ? { romHash, gameCode, name } : { romHash, name };
+  }, [playing, prefs.shelf]);
+  // Read when the heartbeat goes out, so a rename goes with the next one.
+  const presenceRef = useRef(presenceGame);
+  presenceRef.current = presenceGame;
+  // The account has no profile yet (friends can't see it): only events, not the timer, ask again.
+  const noProfile = useRef(false);
+  /** Link requests from the last heartbeat: one waiting for this player, and how theirs stands. For the game screen. */
+  const [linkRequests, setLinkRequests] = useState<PutPresenceResponse>({});
+  const sendPresence = useRef<(() => void) | null>(null);
+  const stopPresence = useRef<(() => Promise<void>) | null>(null);
+  const playingHash = playing?.romHash ?? null;
+  const playingGba = playing?.platform === "gba";
+  useEffect(() => {
+    if (!account) return;
+    let stopped = false;
+    const send = (fromTimer = false) => {
+      if (stopped || (fromTimer && noProfile.current)) return;
+      putPresence(TAB_ID, document.visibilityState === "hidden", presenceRef.current).then(
+        (reply) => {
+          noProfile.current = false;
+          if (!stopped) setLinkRequests(reply);
+        },
+        (err: unknown) => {
+          // Best effort: the next heartbeat tries again.
+          if (err instanceof SocialError && err.code === "profile_required") noProfile.current = true;
+        },
+      );
+    };
+    const leave = () => void clearPresence(TAB_ID).catch(() => {});
+    const onVisibility = () => send();
+    // Back from the back/forward cache after the page said it was leaving.
+    const onPageShow = (event: PageTransitionEvent) => event.persisted && send();
+    send();
+    const timer = setInterval(() => send(true), playingGba ? PRESENCE_GBA_MS : PRESENCE_MS);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", onPageShow);
+    const stop = () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+    sendPresence.current = () => send();
+    stopPresence.current = () => {
+      stop();
+      return clearPresence(TAB_ID).catch(() => {});
+    };
+    return () => {
+      stop();
+      sendPresence.current = null;
+      stopPresence.current = null;
+      // They were for the game (or account) this was about.
+      setLinkRequests({});
+    };
+  }, [account, playingHash, playingGba]);
+  // The player may have just picked a name in the friends panel or an invite: try again once it closes.
+  useEffect(() => {
+    if (panel === null && !invite && noProfile.current) sendPresence.current?.();
+  }, [panel, invite]);
 
   const openRom = useCallback(
     /** `picked`: the player chose this file just now (not from the library). */
@@ -551,6 +631,7 @@ export function App() {
             prefs={prefs}
             onPrefs={updatePrefs}
             signedIn={!!account}
+            linkRequests={linkRequests}
             onEject={() => setStage({ name: "pick" })}
           />
           <MotionCue cue={signInCue} reduceMotion={prefs.reduceMotion} />

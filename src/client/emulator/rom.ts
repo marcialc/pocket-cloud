@@ -10,6 +10,8 @@ export type RomInfo = {
    * ("gba:BPRE") or the file name ("nes:Tetris"). At most 64 characters.
    */
   gameId: string;
+  /** GBA header game code at 0xAC as read (e.g. "BPEE"); missing when blank, and on other platforms. */
+  gameCode?: string;
   title: string;
   /** SHA-256 of the full ROM, computed locally. Identifies saves; the ROM itself never leaves the device. */
   romHash: string;
@@ -102,6 +104,7 @@ function readGbaHeader(bytes: Uint8Array): Omit<RomInfo, "romHash"> {
     platform: "gba",
     // The game code (e.g. "BPRE") tells apart games whose titles match, like regional releases.
     gameId: platformGameId("gba", code || title || "UNKNOWN"),
+    ...(code ? { gameCode: code } : {}),
     title: title || "Unknown game",
     cartridgeType: 0,
     // Save type (SRAM, flash, EEPROM) isn't in the header.

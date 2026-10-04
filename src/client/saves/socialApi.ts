@@ -1,14 +1,19 @@
+import { cleanGameName } from "../../shared/shelf";
 import type {
   AcceptInviteResponse,
   AddFriendResponse,
   BoardId,
+  DeletePresenceRequest,
   FriendsResponse,
   GameLeaderboards,
   GamesResponse,
   InviteResponse,
   MyProfile,
+  PresenceGame,
   Profile,
   ProfileResponse,
+  PutPresenceRequest,
+  PutPresenceResponse,
 } from "../../shared/social";
 
 /** The server refused a friends/leaderboard request, with its error code ("network" if it couldn't be reached). */
@@ -91,6 +96,35 @@ export async function reportScore(romHash: string, board: BoardId, value: number
     body: JSON.stringify({ board, value, title }),
     ...(keepalive ? { keepalive: true } : {}),
   });
+}
+
+/** Heartbeat: the game this tab has open (null on the games page) and whether the tab is in the background. */
+export async function putPresence(tabId: string, hidden: boolean, game: PresenceGame | null): Promise<PutPresenceResponse> {
+  const body: PutPresenceRequest = { tabId, hidden, game };
+  return (await call("/presence", { method: "PUT", body: JSON.stringify(body) })).json();
+}
+
+/** This tab closed, or signed out. Sent with keepalive, so it still goes out while the page unloads. */
+export async function clearPresence(tabId: string): Promise<void> {
+  const body: DeletePresenceRequest = { tabId };
+  await call("/presence", { method: "DELETE", body: JSON.stringify(body), keepalive: true });
+}
+
+/** Say no to a link request a friend sent (its id from the heartbeat). */
+export async function declineLinkRequest(id: string): Promise<void> {
+  await call(`/link-requests/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/**
+ * A game's name as the server takes it in a heartbeat: no control or direction
+ * characters, spaces tidied, at most MAX_GAME_NAME characters.
+ */
+export function presenceName(name: string): string {
+  const clean = cleanGameName(name.replace(/[\p{Cc}\p{Cf}]/gu, ""))
+    // Don't leave half of a character cut at the end.
+    .replace(/[\ud800-\udbff]$/, "")
+    .trim();
+  return clean || "Unknown game";
 }
 
 export function socialErrorMessage(err: unknown): string {
