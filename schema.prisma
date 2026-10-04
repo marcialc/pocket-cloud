@@ -1,0 +1,78 @@
+## Prisma + MongoDB Schema ONLY FOR Scenario/Snapshot Layer (Load States in 4 instances per every 30 min per gameplay) 
+## Reason: Prisma ORM 6.19 is latest GA release with MongoDB support for security patching until 
+## Nov 19, '26
+
+// schema.prisma
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGODB_URI") // mongodb+srv://... (Atlas replica set required for automation)
+}
+
+model Player {
+  id  String  @id @default(auto()) @map("_id") @db.objectId
+  
+}
+
+playerKey String   @unique  // the anonymous UUID or email-derived key
+  email     String?  @unique
+  scenarios Scenario[]
+  createdAt DateTime @default(now())
+}
+
+model ROM {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  romHash   String  @unique  // SHA-256
+  title     String
+  system    String           // "gb" | "gbc" | 'gba'
+  r2Key     String           // roms/{playerId}/{romHash}
+  size      Int              // bytes
+  players   PlayerROM[]
+  @@index([system])
+}
+
+model PlayerROM {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  playerId  String   @db.ObjectId
+  player    Player   @relation(fields: [playerId], references: [id])
+  romId     String   @db.ObjectId
+  rom       ROM      @relation(fields: [romId], references: [id])
+  firstPlayedAt DateTime @default(now())
+  lastPlayedAt  DateTime
+  @@unique([playerId, romId])
+}
+
+model Scenario {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  playerId   String   @db.ObjectId
+  player     Player   @relation(fields: [playerId], references: [id])
+  romId      String   @db.ObjectId
+  slot       Int      // 1–4
+  label      String?  // user-named slot
+  createdAt  DateTime @default(now())
+  snapshots  Snapshot[]
+  @@unique([playerId, romId, slot])
+  @@index([playerId, romId])
+}
+
+model Snapshot {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  scenarioId String   @db.ObjectId
+  scenario   Scenario @relation(fields: [scenarioId], references: [id])
+  r2Key      String   // snapshots/{playerId}/{romHash}/slot{N}/{timestamp}.bin
+  sramHash   String   // SHA-256 of the SRAM at capture time
+  sramSize   Int      // bytes (8-32 KiB)
+  capturedAt DateTime @default(now())
+  intervalMin Int     // 30, 60, 90, or 120
+  @@index([scenarioId, capturedAt])
+  @@index([scenarioId, intervalMin])
+}
+
+// Future: game-state extraction
+model GameState {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  snapshotId String   @db.ObjectId
+  romId      String   @db.ObjectId
+  data       Json     // { position, level, inventory, stats, ... } per-game schema
+  capturedAt DateTime @default(now())
+  @@index([romId, capturedAt])
+}
