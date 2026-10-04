@@ -78,13 +78,16 @@ export function KeyName({ name }: { name: string }) {
   );
 }
 
-/** The power-LED dot plus pixel wordmark, with an optional page-header mascot. */
+/** Pixel wordmark with a power LED or the page-header mascot. */
 export function Brand({ onDark = true, mascot = false }: { onDark?: boolean; mascot?: boolean }) {
   return (
     <span className={`brand${onDark ? "" : " on-shell"}`}>
-      <span className="led" aria-hidden />
+      {mascot ? (
+        <img className="brand-mascot" src="/icons/pocket-cloudy.svg" width="40" height="40" alt="" />
+      ) : (
+        <span className="led" aria-hidden />
+      )}
       <span className="wordmark">POCKET CLOUD</span>
-      {mascot && <img className="brand-mascot" src="/icons/pocket-cloudy.svg" width="40" height="40" alt="" />}
     </span>
   );
 }
