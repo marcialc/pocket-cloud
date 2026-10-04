@@ -282,7 +282,7 @@ export function RomPicker({
       onDrop={onDrop}
     >
       <header className="page-head">
-        <Brand />
+        <Brand mascot />
         <div className="head-actions">
           {account && (
             <button type="button" className="btn small" onClick={onFriends}>

@@ -466,10 +466,7 @@ function PlayerKey({ onBeforeRestore }: { onBeforeRestore?: (() => Promise<void>
 
 function SignedOutArt() {
   return (
-    <svg width="72" height="48" viewBox="0 0 18 12" shapeRendering="crispEdges" aria-hidden>
-      <path fill="#2a615c" d="M6 1h4v1H6zM4 2h2v1H4zM10 2h2v1h-2zM3 3h1v2H3zM12 3h1v1h-1zM13 4h2v1h-2zM1 5h2v1H1zM15 5h1v1h-1zM0 6h1v4H0zM16 6h1v4h-1zM1 10h15v1H1z" />
-      <path fill="#d6384a" d="M7 5h1v1H7zM9 5h1v1H9zM6 7h1v1H6zM10 7h1v1h-1zM7 8h3v1H7z" />
-    </svg>
+    <img className="signed-out-art" src="/animations/sign-in-prompt.png" width="160" height="107" alt="" />
   );
 }
 

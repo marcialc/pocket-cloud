@@ -7,6 +7,7 @@ import { FriendsPanel } from "./components/FriendsPanel";
 import { backupName, downloadBytes } from "./components/download";
 import { GameScreen } from "./components/GameScreen";
 import { InviteDialog } from "./components/InviteDialog";
+import { MotionCue, useMotionCue } from "./components/MotionArt";
 import { RomPicker } from "./components/RomPicker";
 import { SaveChoice } from "./components/SaveChoice";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -91,6 +92,7 @@ export function App() {
   const [invite, setInvite] = useState(takeInvite);
   const inviteRef = useRef(invite);
   const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
+  const { cue: signInCue, play: playSignInCue } = useMotionCue();
 
   // App-wide preferences that live outside any one screen.
   useEffect(() => {
@@ -198,7 +200,8 @@ export function App() {
     await claimRoms(email).catch((err) => console.warn("Could not add this browser's games to the account", err));
     setAccount(email);
     setWelcome(false);
-  }, []);
+    playSignInCue("sign-in-complete");
+  }, [playSignInCue]);
 
   const signedOut = useCallback(async (everywhere: boolean) => {
     await signOut(everywhere);
@@ -502,12 +505,13 @@ export function App() {
               onClose={() => setPanel(null)}
             />
           )}
-          {panel === "friends" && account && <FriendsPanel onClose={() => setPanel(null)} />}
+          {panel === "friends" && account && <FriendsPanel reduceMotion={prefs.reduceMotion} onClose={() => setPanel(null)} />}
           {invite && stage.name === "pick" && (
             <InviteDialog
               token={invite}
               account={account}
               onSignedIn={signedIn}
+              reduceMotion={prefs.reduceMotion}
               onDone={(openFriends) => {
                 clearInvite();
                 setInvite(null);
@@ -525,6 +529,7 @@ export function App() {
               onClose={() => setPanel(null)}
             />
           )}
+          <MotionCue cue={signInCue} reduceMotion={prefs.reduceMotion} />
         </>
       );
     case "choose":
@@ -539,14 +544,17 @@ export function App() {
       );
     case "play":
       return (
-        <GameScreen
-          key={stage.session.rom.romHash + stage.session.save?.sramHash}
-          session={stage.session}
-          prefs={prefs}
-          onPrefs={updatePrefs}
-          signedIn={!!account}
-          onEject={() => setStage({ name: "pick" })}
-        />
+        <>
+          <GameScreen
+            key={stage.session.rom.romHash + stage.session.save?.sramHash}
+            session={stage.session}
+            prefs={prefs}
+            onPrefs={updatePrefs}
+            signedIn={!!account}
+            onEject={() => setStage({ name: "pick" })}
+          />
+          <MotionCue cue={signInCue} reduceMotion={prefs.reduceMotion} />
+        </>
       );
   }
 }

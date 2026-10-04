@@ -39,6 +39,7 @@ import { ControlsPanel } from "./ControlsPanel";
 import { FriendsPanel } from "./FriendsPanel";
 import { LinkPanel } from "./LinkPanel";
 import { Modal } from "./Modal";
+import { MOTION_DURATION_MS, MotionArt, MotionCue, useMotionCue } from "./MotionArt";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
@@ -79,6 +80,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [sync, setSync] = useState<SaveSync | null>(null);
   const [keepSpot, setKeepSpot] = useState<(() => Promise<void>) | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
+  const [showInsert, setShowInsert] = useState(true);
+  const [insertReady, setInsertReady] = useState(false);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Another tab is playing this game, so this one never boots. */
@@ -99,6 +102,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [scale, setScale] = useState(3);
   const [dim, setDim] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const { cue, play: playMotionCue } = useMotionCue();
   const [announce, setAnnounce] = useState("");
   const title = gameName(prefs.shelf, session.rom.romHash) ?? displayName(session.rom);
   const platform = PLATFORMS[session.rom.platform];
@@ -106,8 +110,17 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const bindings = prefs.controls[platform.controls];
   const padBindings = prefs.padControls[platform.controls];
 
-  // Boot: one emulator + one sync pipeline per session.
+  // Show the full cartridge insertion over the LCD before starting the game.
   useEffect(() => {
+    if (!insertReady) return;
+    const reduced = prefs.reduceMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => setShowInsert(false), reduced ? 400 : MOTION_DURATION_MS["game-inserted"]);
+    return () => window.clearTimeout(timer);
+  }, [insertReady, prefs.reduceMotion]);
+
+  // Boot: one emulator + one sync pipeline per session, after the insertion finishes.
+  useEffect(() => {
+    if (showInsert) return;
     let disposed = false;
     const unmounted = new AbortController();
     const emu = createEmulator(session.rom, canvas.current!);
@@ -142,20 +155,34 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       const rtcBase = session.save?.rtcBase ?? Date.now();
       emu.setClock?.(rtcBase);
       // Carry on from where the game was left, unless the battery save has changed since.
+      let resumed = false;
       if (emu.loadState) {
         const resume = await sramHashOf(emu.getSram())
           .then((sramHash) => resumeStateFor(session.rom.romHash, sramHash))
           .catch((err: unknown) => (console.warn("Could not look up where the game was left", err), null));
         if (disposed) return;
         try {
-          if (resume) emu.loadState(new Uint8Array(resume));
+          if (resume) {
+            emu.loadState(new Uint8Array(resume));
+            resumed = true;
+          }
         } catch (err) {
           console.warn("Could not carry on from where the game was left", err);
         }
       }
       remember = resumeKeeper(emu, session.rom.romHash);
       saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase, keeper);
-      saveSync.subscribe(setStatus);
+      let previousSaveState = saveSync.getStatus().state;
+      saveSync.subscribe((next) => {
+        if (disposed) return;
+        setStatus(next);
+        if (next.state === "saved-local" || (next.state === "local-only" && previousSaveState === "local-only")) {
+          playMotionCue("saved-on-device");
+        } else if (next.state === "synced" && (previousSaveState === "saved-local" || previousSaveState === "syncing")) {
+          playMotionCue("cloud-backup-complete");
+        }
+        previousSaveState = next.state;
+      });
       setStatus(saveSync.getStatus());
       if (session.push) saveSync.requestPush(session.push.force);
       emu.onError?.((err) => !disposed && setError(err.message));
@@ -165,6 +192,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       setEmulator(emu);
       setSync(saveSync);
       setKeepSpot(() => remember);
+      if (resumed) playMotionCue("resume-game");
     })().catch((err: unknown) => {
       if (disposed) return;
       console.error(err);
@@ -192,8 +220,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         l?.release();
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session
-  }, [session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session after the insertion
+  }, [session, showInsert]);
 
   // Games with a score in RAM (Tetris): follow it while playing and send the best to the leaderboard.
   useEffect(() => {
@@ -380,6 +408,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   const togglePause = () => {
     setRunning(paused);
+    if (paused) playMotionCue("resume-game");
     setAnnounce(paused ? "Resumed" : "Paused");
   };
 
@@ -583,6 +612,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   // and come back to this device's game when it ends (the friend unplugged, it failed or timed out).
   const linkPhase = link?.phase;
   const linkFriend = link?.friend;
+  const previousLinkPhase = useRef<LinkSession["phase"] | null>(null);
+  useEffect(() => {
+    if (linkPhase === "linked" && previousLinkPhase.current !== "linked") playMotionCue("link-connected");
+    previousLinkPhase.current = linkPhase ?? null;
+  }, [linkPhase, playMotionCue]);
   useEffect(() => {
     if (!linkFriend || (linkPhase !== "waiting" && linkPhase !== "linked")) return;
     let stopped = false;
@@ -685,6 +719,9 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               />
               {link && link.phase !== "linked" && (
                 <div className="lcd-overlay" role="status">
+                  {link.phase === "waiting" && (
+                    <MotionArt name="waiting-for-friend" reduceMotion={prefs.reduceMotion} className="waiting-art" />
+                  )}
                   <span className="px">
                     {link.phase === "plugging" ? "PLUGGING IN…" : link.phase === "unplugging" ? "UNPLUGGING…" : `WAITING FOR ${link.friend.name.toUpperCase()}`}
                   </span>
@@ -700,6 +737,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               )}
               {paused && !link && !error && !flash && (
                 <button type="button" className="lcd-overlay" onClick={togglePause}>
+                  <MotionArt name="game-paused" reduceMotion={prefs.reduceMotion} className="pause-art" />
                   <span className="px">PAUSED</span>
                   <small className="px">PRESS TO RESUME</small>
                 </button>
@@ -715,6 +753,19 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   <small>{error}</small>
                 </div>
               )}
+              {showInsert && (
+                <div className="lcd-motion-overlay" role="status">
+                  <MotionArt name="game-inserted" reduceMotion={prefs.reduceMotion} onReady={() => setInsertReady(true)} />
+                  <span className="px">INSERTING GAME…</span>
+                </div>
+              )}
+              {status.state === "syncing" && !cue && !link && !error && !showInsert && (
+                <div className="lcd-motion-overlay" role="status">
+                  <MotionArt name="cloud-backup-syncing" reduceMotion={prefs.reduceMotion} />
+                  <span className="px">BACKING UP SAVE…</span>
+                </div>
+              )}
+              <MotionCue cue={cue} reduceMotion={prefs.reduceMotion} />
             </div>
           </div>
           <div className="shell-foot">
@@ -941,7 +992,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         />
       )}
 
-      {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} onClose={() => setPanel(null)} />}
+      {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} reduceMotion={prefs.reduceMotion} onClose={() => setPanel(null)} />}
 
       {panel === "link" && <LinkPanel romHash={session.rom.romHash} onPlug={(friend) => void plug(friend)} onClose={() => setPanel(null)} />}
 

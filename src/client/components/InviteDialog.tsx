@@ -3,6 +3,7 @@ import { MAX_NAME_LENGTH, normalizeName, type Profile } from "../../shared/socia
 import { acceptInvite, fetchInvite, fetchProfile, saveProfile, SocialError, socialErrorMessage } from "../saves/socialApi";
 import { Icon } from "./icons";
 import { Modal } from "./Modal";
+import { MotionArt } from "./MotionArt";
 import { SignInForm } from "./SignInForm";
 
 type Props = {
@@ -10,6 +11,7 @@ type Props = {
   /** Signed-in email; undefined while checking, null when signed out. */
   account: string | null | undefined;
   onSignedIn: (email: string) => Promise<void>;
+  reduceMotion: boolean;
   /** Finished or dismissed; `openFriends` when they asked to see the leaderboards. */
   onDone: (openFriends: boolean) => void;
 };
@@ -23,7 +25,7 @@ type Step =
   | { name: "friends"; inviter: Profile };
 
 /** Someone opened a friend's invite link: sign in if needed, then one tap and you're friends. */
-export function InviteDialog({ token, account, onSignedIn, onDone }: Props) {
+export function InviteDialog({ token, account, onSignedIn, reduceMotion, onDone }: Props) {
   const [step, setStep] = useState<Step>({ name: "loading" });
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -112,6 +114,7 @@ export function InviteDialog({ token, account, onSignedIn, onDone }: Props) {
 
       {step.name === "friends" && (
         <>
+          <MotionArt name="friend-added" reduceMotion={reduceMotion} className="invite-art" />
           <h2 id="invite-title">
             <Icon name="check" size={22} /> You and {step.inviter.name} are friends
           </h2>
