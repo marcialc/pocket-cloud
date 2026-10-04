@@ -11,7 +11,7 @@ export function WelcomeScreen({ onSignedIn, onSkip }: Props) {
   return (
     <main className="page welcome">
       <header className="page-head">
-        <Brand />
+        <Brand mascot />
       </header>
       <section className="cart-card plastic" aria-labelledby="welcome-title">
         <div className="cart-grip">

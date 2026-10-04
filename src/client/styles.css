@@ -99,6 +99,8 @@ h1, h2, h3, p { margin: 0; }
 .brand { display: inline-flex; align-items: center; gap: 10px; }
 .wordmark { font: 12px/1 var(--pixel); letter-spacing: 0.04em; color: var(--on-bg); white-space: nowrap; }
 .brand.on-shell .wordmark { color: var(--ink); font-size: 15px; }
+.brand-mascot { width: 40px; height: 40px; flex: none; animation: cloud-float 3.2s ease-in-out infinite; }
+@keyframes cloud-float { 50% { transform: translateY(-4px); } }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -862,6 +864,9 @@ kbd.empty { color: var(--ink-2); }
 }
 @media (max-width: 520px) {
   .hide-narrow { display: none; }
+  .picker .page-head { flex-wrap: wrap; }
+  .picker .head-actions { margin-left: auto; }
+  .page-head .brand-mascot { width: 32px; height: 32px; }
   .cart-body { padding: 20px 20px 18px; }
   .paper-label { margin: 12px 16px 0; }
   .cart-grip { padding: 14px 60px 0 20px; }
