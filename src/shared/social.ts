@@ -8,6 +8,8 @@
  */
 
 import { CODE_ALPHABET, CODE_LENGTH } from "./auth";
+import type { IncomingLinkRequest, OutgoingLinkRequest } from "./link";
+import { MAX_GAME_NAME } from "./shelf";
 
 /**
  * What a board ranks (higher is better on every board).
@@ -55,8 +57,18 @@ export type AcceptInviteResponse = { friend: Profile };
 
 export type PutProfileRequest = { name: string };
 
+/**
+ * What a friend is doing, as other friends see it. `playing` carries the name
+ * the game has on their shelf (their rename, or its default name); the ROM
+ * hash and game code stay on the server.
+ */
+export type Presence = { status: "offline" } | { status: "lobby" } | { status: "playing"; name: string };
+
+/** An accepted friend. Only friends get presence; requests don't. */
+export type Friend = Profile & { presence: Presence };
+
 export type FriendsResponse = {
-  friends: Profile[];
+  friends: Friend[];
   /** Asked to be your friend; accept by adding their code. */
   incoming: Profile[];
   /** You asked; waiting for them. */
@@ -64,6 +76,37 @@ export type FriendsResponse = {
 };
 
 export type AddFriendRequest = { code: string };
+
+/**
+ * The game open in a tab: its ROM hash, the 4-character GBA header game code
+ * (missing for games without one, like GB/GBC) and the name it has on the
+ * player's shelf.
+ */
+export type PresenceGame = { romHash: string; gameCode?: string; name: string };
+
+/**
+ * Heartbeat from one tab. `game` is null on the games page (the lobby).
+ * `hidden` is true while the tab is in the background.
+ */
+export type PutPresenceRequest = { tabId: string; hidden: boolean; game: PresenceGame | null };
+
+/**
+ * Reply to a heartbeat. `incoming`: the oldest link request waiting for you
+ * (only to a tab in a game; one at a time). `outgoing`: the link request you
+ * sent last and how it stands, kept for a while after it ends.
+ */
+export type PutPresenceResponse = { incoming?: IncomingLinkRequest; outgoing?: OutgoingLinkRequest };
+
+export type DeletePresenceRequest = { tabId: string };
+
+/** A tab id the browser makes up when it loads. */
+export const TAB_ID_PATTERN = /^[0-9A-Za-z_-]{8,64}$/;
+
+/** GBA header game code: 4 upper-case letters or digits (e.g. "BPEE"). */
+export const GAME_CODE_PATTERN = /^[0-9A-Z]{4}$/;
+
+/** A friend who hasn't sent a heartbeat for this long is offline (background tabs only tick about once a minute). */
+export const PRESENCE_TIMEOUT_MS = 90_000;
 
 /** `friends`: they had already asked you, so you're friends now. `requested`: waiting for them. */
 export type AddFriendResponse = { status: "friends" | "requested"; friend: Profile };
@@ -113,8 +156,13 @@ export function normalizeName(value: unknown): string | null {
 }
 
 /** A game title shown to friends (cartridge header title): 1-64 characters, no control or direction characters. */
-export function isGameTitle(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 64 && !HIDDEN_CHARACTERS.test(value);
+export function isGameTitle(value: unknown, maxLength = 64): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength && !HIDDEN_CHARACTERS.test(value);
+}
+
+/** A game's name on a player's shelf, as friends see it in presence. */
+export function isPresenceGameName(value: unknown): value is string {
+  return isGameTitle(value, MAX_GAME_NAME) && value.trim().length > 0;
 }
 
 /** Friends one account can have, and friend requests it can have waiting. */

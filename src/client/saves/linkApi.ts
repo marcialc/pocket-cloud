@@ -1,23 +1,13 @@
 import { unzlibSync, zlibSync } from "fflate";
 import { base64ToBytes, bytesToBase64 } from "../../shared/api";
+import type { LinkFriend, LinkFriendsResponse, LinkStatus, PlugResponse } from "../../shared/link";
 
 /**
  * GBA link play with a friend (/api/link, see src/worker/link.ts). Needs the
  * email session cookie, which the browser sends on its own.
  */
 
-export type LinkState = "empty" | "waiting" | "starting" | "linked" | "ending" | "failed";
-
-export type LinkStatus = {
-  state: LinkState;
-  /** Your place on the cable, once plugged in (1 or 2). */
-  slot?: number;
-  friendPluggedIn: boolean;
-  /** The romHash of your save from a link that ended, still to be picked up. */
-  saveWaiting: string | null;
-  /** Why a link failed. */
-  error?: string;
-};
+export type { LinkState, LinkStatus } from "../../shared/link";
 
 /**
  * What a link left, for the game it was played in: the save (null if the game
@@ -53,6 +43,16 @@ async function call(path: string, init: RequestInit = {}, timeoutMs = 8000): Pro
 
 const room = (friendCode: string) => `/${encodeURIComponent(friendCode)}`;
 
+/**
+ * Every friend with whether they can link with the game open now (its
+ * romHash), and their link room as you see it. One request for the whole
+ * Link panel.
+ */
+export async function fetchLinkFriends(romHash: string): Promise<LinkFriend[]> {
+  const body: LinkFriendsResponse = await (await call(`?romHash=${encodeURIComponent(romHash)}`)).json();
+  return body.friends;
+}
+
 export async function fetchLinkStatus(friendCode: string): Promise<LinkStatus> {
   return (await call(room(friendCode))).json();
 }
@@ -61,16 +61,20 @@ export async function fetchLinkStatus(friendCode: string): Promise<LinkStatus> {
  * Plug in the cable with this game, its save and where it is (the core's own
  * snapshot, so the link carries on from there; without one the game powers on
  * from the save). When the friend is already plugged in, this starts the link
- * and answers once both games run, which takes a few seconds.
+ * and answers once both games run, which takes a few seconds. With `ask`, the
+ * friend is asked to plug in too (requestId says which request; their answer
+ * comes with the heartbeat).
  */
 export async function plugIn(
   friendCode: string,
   romHash: string,
   sram: Uint8Array | null,
   state: Uint8Array | null = null,
-): Promise<LinkStatus> {
+  ask = false,
+): Promise<PlugResponse> {
   const body = {
     romHash,
+    ...(ask ? { ask: true } : {}),
     ...(sram ? { sram: bytesToBase64(sram) } : {}),
     // mGBA's snapshot is about 400 KB, mostly zeros and repeats.
     ...(state ? { state: bytesToBase64(zlibSync(state)) } : {}),
@@ -140,6 +144,16 @@ export function linkErrorMessage(err: unknown): string {
       return "The link is starting or ending. Try again in a moment.";
     case "link_unavailable":
       return "Linking isn’t available here.";
+    case "friend_offline":
+      return "Your friend is offline.";
+    case "friend_not_in_game":
+      return "Your friend isn’t in a game right now.";
+    case "games_cannot_link":
+      return "Your friend’s game can’t link with this one. Linking needs the same game file, or two of Pokémon Ruby, Sapphire, Emerald, FireRed and LeafGreen.";
+    case "friend_not_looking":
+      return "Your friend isn’t looking at the game right now.";
+    case "friend_linked":
+      return "Your friend is already on the cable with someone else.";
     case "rom_missing":
       return "One of the games isn’t in its player’s cloud library any more.";
     case "link_lost":

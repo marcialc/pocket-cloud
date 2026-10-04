@@ -1,19 +1,26 @@
 import { HASH_PATTERN } from "../shared/api";
+import { LINK_REQUEST_ID_PATTERN } from "../shared/link";
 import { isGameBoyGameId } from "../shared/platforms";
 import {
   CLIENT_BOARDS,
+  GAME_CODE_PATTERN,
   INVITE_TOKEN_PATTERN,
   isGameTitle,
   MAX_CLIENT_SCORE,
   isBoardId,
+  isPresenceGameName,
   normalizeFriendCode,
   normalizeName,
   pokedexCaught,
+  TAB_ID_PATTERN,
   type AcceptInviteResponse,
   type AddFriendRequest,
+  type DeletePresenceRequest,
   type GamesResponse,
   type InviteResponse,
+  type PresenceGame,
   type ProfileResponse,
+  type PutPresenceRequest,
   type PutProfileRequest,
   type PutScoreRequest,
 } from "../shared/social";
@@ -28,12 +35,20 @@ import { json, methodNotAllowed } from "./http";
  *   POST   /api/social/profile/invite       new invite link (the old one stops working)
  *   GET    /api/social/invites/:token       whose invite link it is (no sign-in needed)
  *   POST   /api/social/invites/:token       add them: friends at once
- *   GET    /api/social/friends              friends plus incoming and outgoing requests
+ *   GET    /api/social/friends              friends (with what they're doing) plus incoming and outgoing requests
  *   POST   /api/social/friends   { code }   ask, or accept if they asked first
  *   DELETE /api/social/friends/:code        unfriend, decline or cancel
  *   GET    /api/social/games                leaderboards for games you and your friends play
  *   GET    /api/social/games/:romHash       one game's leaderboards
  *   PUT    /api/social/scores/:romHash  { board, value, title }   a score the browser watched
+ *   PUT    /api/social/presence  { tabId, hidden, game }   heartbeat: this tab is in a game or the lobby;
+ *                                    answers { incoming?, outgoing? }: a link request waiting
+ *                                    for you, and how the one you sent stands
+ *   DELETE /api/social/presence  { tabId }   that tab closed
+ *   DELETE /api/social/link-requests/:id    say no to a link request sent to you
+ *
+ * Link requests are sent by plugging in with `ask` (see link.ts), and
+ * cancelled by unplugging.
  *
  * Everything but /profile and /scores needs a profile first (409 profile_required).
  * Play time and Pokédex boards are filled from uploaded saves, see
@@ -123,6 +138,34 @@ export async function handleSocial(request: Request, env: Env, url: URL, playerI
     return (await social.removeFriend(playerId, code)) ? new Response(null, { status: 204 }) : json({ error: "not_found" }, 404);
   }
 
+  if (path === "/api/social/presence") {
+    switch (request.method) {
+      case "PUT": {
+        const body = await readJson<PutPresenceRequest>(request);
+        if (!body || typeof body.tabId !== "string" || !TAB_ID_PATTERN.test(body.tabId)) return json({ error: "invalid_tab" }, 400);
+        if (typeof body.hidden !== "boolean") return json({ error: "invalid_hidden" }, 400);
+        const game = body.game === null ? null : presenceGame(body.game);
+        if (game === undefined) return json({ error: "invalid_game" }, 400);
+        return json(await social.setPresence(playerId, body.tabId, game, body.hidden));
+      }
+      case "DELETE": {
+        const tabId = (await readJson<DeletePresenceRequest>(request))?.tabId;
+        if (typeof tabId !== "string" || !TAB_ID_PATTERN.test(tabId)) return json({ error: "invalid_tab" }, 400);
+        await social.clearPresence(playerId, tabId);
+        return new Response(null, { status: 204 });
+      }
+      default:
+        return methodNotAllowed();
+    }
+  }
+
+  const requestId = /^\/api\/social\/link-requests\/([^/]+)$/.exec(path)?.[1];
+  if (requestId !== undefined) {
+    if (request.method !== "DELETE") return methodNotAllowed();
+    if (!LINK_REQUEST_ID_PATTERN.test(requestId)) return json({ error: "not_found" }, 404);
+    return (await social.declineLinkRequest(playerId, requestId)) ? new Response(null, { status: 204 }) : json({ error: "not_found" }, 404);
+  }
+
   if (path === "/api/social/games") {
     if (request.method !== "GET") return methodNotAllowed();
     return json({ games: await social.leaderboards(playerId) } satisfies GamesResponse);
@@ -172,6 +215,16 @@ export async function recordSaveScores(
   } catch (err) {
     console.error(JSON.stringify({ message: "could not record leaderboard scores", error: String(err) }));
   }
+}
+
+/** The game in a heartbeat, keeping only the known fields; undefined if it isn't valid. */
+function presenceGame(value: unknown): PresenceGame | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { romHash, gameCode, name } = value as Partial<Record<keyof PresenceGame, unknown>>;
+  if (typeof romHash !== "string" || !HASH_PATTERN.test(romHash)) return undefined;
+  if (gameCode !== undefined && (typeof gameCode !== "string" || !GAME_CODE_PATTERN.test(gameCode))) return undefined;
+  if (!isPresenceGameName(name)) return undefined;
+  return gameCode === undefined ? { romHash, name } : { romHash, gameCode, name };
 }
 
 export function socialStub(env: Env) {

@@ -52,7 +52,7 @@ export { StatsDO } from "./durable-objects/StatsDO";
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
  *   /api/social/*                  friends and leaderboards (email sign-in only), see social.ts
- *   /api/link/*                    GBA link play with a friend (email sign-in only), see link.ts
+ *   /api/link, /api/link/*         GBA link play with a friend (email sign-in only), see link.ts
  *   /api/admin/*                   usage dashboard (Cloudflare Access only), see admin.ts
  *   /api/auth/*                    email sign-in, see auth/routes.ts
  *   GET    /api/covers/*           game box art (no sign-in), see covers.ts
@@ -97,7 +97,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const roms = path === "/api/roms" || path.startsWith("/api/roms/");
   const settings = path === "/api/settings";
   const social = path.startsWith("/api/social/");
-  const link = path.startsWith("/api/link/");
+  const link = path === "/api/link" || path.startsWith("/api/link/");
   const admin = path.startsWith("/api/admin/");
   if (social) {
     const preview = await handleInvitePreview(request, env, path);

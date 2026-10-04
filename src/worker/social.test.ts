@@ -1,7 +1,14 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bytesToBase64, sha256Hex } from "../shared/api";
-import type { AddFriendResponse, FriendsResponse, GamesResponse, ProfileResponse } from "../shared/social";
+import {
+  PRESENCE_TIMEOUT_MS,
+  type AddFriendResponse,
+  type FriendsResponse,
+  type GamesResponse,
+  type Presence,
+  type ProfileResponse,
+} from "../shared/social";
 import type { AuthDO } from "./durable-objects/AuthDO";
 
 const API = "https://example.com/api";
@@ -118,7 +125,7 @@ describe("friends", () => {
 
     expect(await (await call(misty.cookie, "POST", "/friends", { code: ash.code })).json()).toMatchObject({ status: "friends" });
     expect(await (await call(ash.cookie, "GET", "/friends")).json()).toEqual({
-      friends: [{ name: "Misty", friendCode: misty.code }],
+      friends: [{ name: "Misty", friendCode: misty.code, presence: { status: "offline" } }],
       incoming: [],
       outgoing: [],
     });
@@ -172,7 +179,7 @@ describe("invite links", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ friend: { name: "Ash", friendCode: ash.code } });
     expect(await (await call(ash.cookie, "GET", "/friends")).json()).toEqual({
-      friends: [{ name: "Misty", friendCode: misty.code }],
+      friends: [{ name: "Misty", friendCode: misty.code, presence: { status: "offline" } }],
       incoming: [],
       outgoing: [],
     });
@@ -206,6 +213,111 @@ describe("invite links", () => {
     expect(reset.profile!.friendCode).toBe(ash.code);
     expect((await call(misty.cookie, "POST", `/invites/${old}`)).status).toBe(404);
     expect((await call(misty.cookie, "POST", `/invites/${reset.profile!.inviteToken}`)).status).toBe(200);
+  });
+});
+
+describe("presence", () => {
+  const tab = () => crypto.randomUUID();
+  const lobby = (cookie: string, tabId: string, hidden = false) => call(cookie, "PUT", "/presence", { tabId, hidden, game: null });
+  const playing = (cookie: string, tabId: string, name: string, gameCode?: string) =>
+    call(cookie, "PUT", "/presence", { tabId, hidden: false, game: { romHash: randomHash(), gameCode, name } });
+
+  async function presenceOf(viewer: string, code: string): Promise<Presence | undefined> {
+    const friends = await (await call(viewer, "GET", "/friends")).json<FriendsResponse>();
+    return friends.friends.find((f) => f.friendCode === code)?.presence;
+  }
+
+  it("shows friends whether you're in a game or the lobby, and clears it when the tab closes", async () => {
+    const ash = await player("Ash");
+    const misty = await player("Misty");
+    await befriend(ash, misty);
+    const tabId = tab();
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "offline" });
+
+    const res = await lobby(misty.cookie, tabId);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "lobby" });
+
+    expect((await playing(misty.cookie, tabId, "Ruby run #2", "AXVE")).status).toBe(200);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "playing", name: "Ruby run #2" });
+
+    expect((await call(misty.cookie, "DELETE", "/presence", { tabId })).status).toBe(204);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "offline" });
+  });
+
+  it("goes offline after 90 seconds without a heartbeat, hidden tabs included", async () => {
+    const ash = await player("Ash");
+    const misty = await player("Misty");
+    await befriend(ash, misty);
+    const start = Date.now();
+    await lobby(misty.cookie, tab(), true);
+
+    vi.spyOn(Date, "now").mockReturnValue(start + PRESENCE_TIMEOUT_MS - 1_000);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "lobby" });
+    vi.spyOn(Date, "now").mockReturnValue(start + PRESENCE_TIMEOUT_MS + 1_000);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "offline" });
+  });
+
+  it("is only shown to accepted friends, not to requests either way", async () => {
+    const ash = await player("Ash");
+    const misty = await player("Misty");
+    const brock = await player("Brock");
+    await call(ash.cookie, "POST", "/friends", { code: misty.code });
+    await call(brock.cookie, "POST", "/friends", { code: ash.code });
+    await lobby(misty.cookie, tab());
+    await lobby(brock.cookie, tab());
+
+    const friends = await (await call(ash.cookie, "GET", "/friends")).json<FriendsResponse>();
+    expect(friends).toEqual({
+      friends: [],
+      incoming: [{ name: "Brock", friendCode: brock.code }],
+      outgoing: [{ name: "Misty", friendCode: misty.code }],
+    });
+  });
+
+  it("follows your newest tab, and closing one tab keeps you online", async () => {
+    const ash = await player("Ash");
+    const misty = await player("Misty");
+    await befriend(ash, misty);
+    const first = tab();
+    const second = tab();
+    const start = Date.now();
+
+    await playing(misty.cookie, first, "Emerald", "BPEE");
+    vi.spyOn(Date, "now").mockReturnValue(start + 5_000);
+    await lobby(misty.cookie, second);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "lobby" });
+
+    vi.spyOn(Date, "now").mockReturnValue(start + 10_000);
+    await playing(misty.cookie, first, "Emerald", "BPEE");
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "playing", name: "Emerald" });
+
+    expect((await call(misty.cookie, "DELETE", "/presence", { tabId: first })).status).toBe(204);
+    expect(await presenceOf(ash.cookie, misty.code)).toEqual({ status: "lobby" });
+  });
+
+  it("refuses heartbeats that aren't well formed", async () => {
+    const ash = await player("Ash");
+    const put = (body: unknown) => call(ash.cookie, "PUT", "/presence", body);
+    const game = { romHash: randomHash(), gameCode: "BPEE", name: "Emerald" };
+    expect((await put({ tabId: tab(), hidden: false, game })).status).toBe(200);
+    // GB/GBC games have no game code.
+    expect((await put({ tabId: tab(), hidden: false, game: { romHash: game.romHash, name: "Tetris" } })).status).toBe(200);
+
+    expect((await put({ tabId: "x", hidden: false, game: null })).status).toBe(400);
+    expect((await put({ tabId: tab(), game: null })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, romHash: "nope" } })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, gameCode: "bpee" } })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, gameCode: "BPEEE" } })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, name: "" } })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, name: "x".repeat(61) } })).status).toBe(400);
+    expect((await put({ tabId: tab(), hidden: false, game: { ...game, name: "Emerald\u202e" } })).status).toBe(400);
+    expect((await call(ash.cookie, "DELETE", "/presence", { tabId: "x" })).status).toBe(400);
+
+    const noProfile = await signIn();
+    expect((await call(noProfile, "PUT", "/presence", { tabId: tab(), hidden: false, game: null })).status).toBe(409);
   });
 });
 

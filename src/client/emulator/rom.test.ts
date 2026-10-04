@@ -97,6 +97,14 @@ describe("platforms", () => {
     expect(() => readHeader(new Uint8Array(0x40), "gba", "x.gba")).toThrow(RomError);
   });
 
+  it("keeps the raw GBA game code on its own, and none when it's blank or not a GBA game", async () => {
+    expect(readHeader(new Uint8Array(fakeGbaRom()), "gba", "firered.gba").gameCode).toBe("BPRE");
+    expect(readHeader(new Uint8Array(fakeGbaRom({ code: "BPEE" })), "gba", "emerald.gba").gameCode).toBe("BPEE");
+    expect(readHeader(new Uint8Array(fakeGbaRom({ code: "\0\0\0\0" })), "gba", "x.gba")).not.toHaveProperty("gameCode");
+    expect(await inspectRom(fakeGbaRom(), "firered.gba")).toMatchObject({ gameCode: "BPRE" });
+    expect(await inspectRom(fakeRom(), "red.gb")).not.toHaveProperty("gameCode");
+  });
+
   it("plays GBA games and refuses platforms that can't be played yet", async () => {
     expect(await inspectRom(fakeGbaRom(), "firered.gba")).toMatchObject({ platform: "gba", gameId: "gba:BPRE" });
     await expect(inspectRom(new ArrayBuffer(0x8000), "mario.sfc")).rejects.toThrow("SNES games aren't supported yet.");

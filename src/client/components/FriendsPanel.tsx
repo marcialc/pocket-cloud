@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BOARDS,
   formatFriendCode,
@@ -6,6 +6,7 @@ import {
   normalizeFriendCode,
   normalizeName,
   MAX_NAME_LENGTH,
+  type Friend,
   type FriendsResponse,
   type GameLeaderboards,
   type Leaderboard,
@@ -37,6 +38,9 @@ type Props = {
 
 type Load<T> = { state: "loading" } | { state: "error" } | { state: "ready"; value: T };
 
+/** How often the open panel checks who's online. */
+const FRIENDS_REFRESH_MS = 10_000;
+
 /**
  * Friends and leaderboards. Games are never sent to friends: each of you
  * loads your own copy, and the same file lands you on the same board.
@@ -60,8 +64,14 @@ export function FriendsPanel({ current, reduceMotion, onClose }: Props) {
   useEffect(loadProfile, [loadProfile]);
 
   const hasProfile = profile.state === "ready" && profile.value !== null;
+  // Only the newest friends fetch lands, so a slow timed check can't undo a remove or accept made after it started.
+  const friendsRequest = useRef(0);
   const refresh = useCallback(() => {
-    fetchFriends().then(setFriends, () => setFriends(null));
+    const request = ++friendsRequest.current;
+    fetchFriends().then(
+      (value) => request === friendsRequest.current && setFriends(value),
+      () => request === friendsRequest.current && setFriends(null),
+    );
     fetchLeaderboards().then(
       (value) => setGames({ state: "ready", value }),
       () => setGames({ state: "error" }),
@@ -70,6 +80,15 @@ export function FriendsPanel({ current, reduceMotion, onClose }: Props) {
   useEffect(() => {
     if (hasProfile) refresh();
   }, [hasProfile, refresh]);
+  // Friends coming online or changing game show up without reopening the panel. A failed check keeps the list it had.
+  useEffect(() => {
+    if (!hasProfile) return;
+    const timer = setInterval(() => {
+      const request = ++friendsRequest.current;
+      fetchFriends().then((value) => request === friendsRequest.current && setFriends(value), () => {});
+    }, FRIENDS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [hasProfile]);
 
   return (
     <SidePanel id="friends-title" title="FRIENDS" onClose={onClose}>
@@ -377,7 +396,10 @@ function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChang
       (err) => setError(socialErrorMessage(err)),
     );
 
+  const remove = (p: Friend) => void act(removeFriend(p.friendCode), `Removed ${p.name}.`);
+
   const { incoming, outgoing } = friends;
+  const { online, offline } = byPresence(friends.friends);
   return (
     <>
       {incoming.length > 0 && (
@@ -410,55 +432,47 @@ function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChang
         </section>
       )}
 
-      <section className="stack-sm" aria-labelledby="friends-h">
-        <h3 id="friends-h" className="px h-section">
-          FRIENDS
-        </h3>
-        {friends.friends.length === 0 && outgoing.length === 0 && (
+      {friends.friends.length === 0 && outgoing.length === 0 && (
+        <section className="stack-sm" aria-labelledby="friends-h">
+          <h3 id="friends-h" className="px h-section">
+            FRIENDS
+          </h3>
           <p className="card fine">No friends yet. Send your code to a friend, or add theirs above.</p>
-        )}
-        {(friends.friends.length > 0 || outgoing.length > 0) && (
+        </section>
+      )}
+
+      {online.length > 0 && (
+        <section className="stack-sm" aria-labelledby="online-h">
+          <h3 id="online-h" className="px h-section">
+            ONLINE
+          </h3>
           <ul className="save-list">
-            {friends.friends.map((p) => (
-              <li key={p.friendCode} className="card save-row">
-                <div className="save-row-main">
-                  <span className="save-row-text">
-                    <strong>{p.name}</strong>
-                    <small>{formatFriendCode(p.friendCode)}</small>
-                  </span>
-                  {confirm !== p.friendCode && (
-                    <button
-                      type="button"
-                      className="ibtn small tip danger-ink"
-                      data-tip="Remove friend"
-                      aria-label={`Remove ${p.name} from friends`}
-                      onClick={() => setConfirm(p.friendCode)}
-                    >
-                      <Icon name="trash" size={17} />
-                    </button>
-                  )}
-                </div>
-                {confirm === p.friendCode && (
-                  <div className="confirm-inline enter" role="alertdialog" aria-labelledby={`unfriend-${p.friendCode}`}>
-                    <p id={`unfriend-${p.friendCode}`}>
-                      Remove <strong>{p.name}</strong>? You’ll stop seeing each other on leaderboards.
-                    </p>
-                    <div className="row end">
-                      <button type="button" className="btn small" autoFocus onClick={() => setConfirm(null)}>
-                        Keep
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small primary"
-                        onClick={() => void act(removeFriend(p.friendCode), `Removed ${p.name}.`)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </li>
+            {online.map((p) => (
+              <FriendRow key={p.friendCode} friend={p} confirm={confirm} onConfirm={setConfirm} onRemove={remove} />
             ))}
+          </ul>
+        </section>
+      )}
+
+      {offline.length > 0 && (
+        <section className="stack-sm" aria-labelledby="offline-h">
+          <h3 id="offline-h" className="px h-section">
+            OFFLINE
+          </h3>
+          <ul className="save-list">
+            {offline.map((p) => (
+              <FriendRow key={p.friendCode} friend={p} confirm={confirm} onConfirm={setConfirm} onRemove={remove} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {outgoing.length > 0 && (
+        <section className="stack-sm" aria-labelledby="outgoing-h">
+          <h3 id="outgoing-h" className="px h-section">
+            REQUESTS SENT
+          </h3>
+          <ul className="save-list">
             {outgoing.map((p) => (
               <li key={p.friendCode} className="card save-row">
                 <div className="save-row-main">
@@ -473,14 +487,77 @@ function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChang
               </li>
             ))}
           </ul>
-        )}
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-      </section>
+        </section>
+      )}
+
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
     </>
+  );
+}
+
+/** Online first: friends in a game, then friends in the lobby. Each keeps the server's order. */
+function byPresence(friends: Friend[]): { online: Friend[]; offline: Friend[] } {
+  return {
+    online: [
+      ...friends.filter((f) => f.presence.status === "playing"),
+      ...friends.filter((f) => f.presence.status === "lobby"),
+    ],
+    offline: friends.filter((f) => f.presence.status === "offline"),
+  };
+}
+
+function presenceText(friend: Friend): string {
+  const { presence } = friend;
+  if (presence.status === "playing") return `Playing ${presence.name}`;
+  if (presence.status === "lobby") return "In lobby";
+  return formatFriendCode(friend.friendCode);
+}
+
+function FriendRow({ friend: p, confirm, onConfirm, onRemove }: {
+  friend: Friend;
+  confirm: string | null;
+  onConfirm: (friendCode: string | null) => void;
+  onRemove: (friend: Friend) => void;
+}) {
+  return (
+    <li className="card save-row">
+      <div className="save-row-main">
+        <span className="save-row-text">
+          <strong>{p.name}</strong>
+          <small>{presenceText(p)}</small>
+        </span>
+        {confirm !== p.friendCode && (
+          <button
+            type="button"
+            className="ibtn small tip danger-ink"
+            data-tip="Remove friend"
+            aria-label={`Remove ${p.name} from friends`}
+            onClick={() => onConfirm(p.friendCode)}
+          >
+            <Icon name="trash" size={17} />
+          </button>
+        )}
+      </div>
+      {confirm === p.friendCode && (
+        <div className="confirm-inline enter" role="alertdialog" aria-labelledby={`unfriend-${p.friendCode}`}>
+          <p id={`unfriend-${p.friendCode}`}>
+            Remove <strong>{p.name}</strong>? You’ll stop seeing each other on leaderboards.
+          </p>
+          <div className="row end">
+            <button type="button" className="btn small" autoFocus onClick={() => onConfirm(null)}>
+              Keep
+            </button>
+            <button type="button" className="btn small primary" onClick={() => onRemove(p)}>
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 

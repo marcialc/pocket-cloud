@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Session } from "../App";
 import type { SaveVersion } from "../../shared/api";
-import type { Profile } from "../../shared/social";
+import { LINK_REQUEST_TIMEOUT_MS, type IncomingLinkRequest, type OutgoingLinkRequest, type PlugResponse } from "../../shared/link";
+import type { Profile, PutPresenceResponse } from "../../shared/social";
 import { PLATFORMS, buttonLabel, type PlatformId } from "../../shared/platforms";
 import { gameName } from "../../shared/shelf";
 import { bindKeyboard } from "../emulator/controls";
@@ -28,7 +29,7 @@ import {
   type LinkStatus,
 } from "../saves/linkApi";
 import { resetPlayerKey } from "../saves/identity";
-import { reportScore } from "../saves/socialApi";
+import { declineLinkRequest, reportScore } from "../saves/socialApi";
 import { clearCloudSyncState } from "../saves/localSaves";
 import { resumeKeeper, resumeStateFor, sramHashOf } from "../saves/resumeStates";
 import { ScreenKeeper } from "../saves/saveShots";
@@ -54,6 +55,8 @@ type Props = {
   onPrefs: (patch: Partial<Preferences>) => void;
   /** Signed in with an email account (controls are saved to it). */
   signedIn: boolean;
+  /** Link requests from the last presence heartbeat (App.tsx): one waiting for this player, and how theirs stands. */
+  linkRequests: PutPresenceResponse;
   onEject: () => void;
 };
 
@@ -65,14 +68,22 @@ const CAN_FULLSCREEN = document.fullscreenEnabled === true;
 /** How often the link's state is checked while waiting for the friend or linked. */
 const LINK_POLL_MS = 2000;
 
+/** Waiting this much longer than a link request lasts with no word on it from the server: it was lost (a restart). */
+const LOST_REQUEST_GRACE_MS = 15_000;
+
 /**
  * A link cable session with a friend (GBA only). While it's on, the game runs
  * on the link server: the local emulator is paused and a LinkEmulator shows
- * the streamed screen and takes the buttons.
+ * the streamed screen and takes the buttons. `request`: plugged in by asking
+ * the friend, waiting for their answer (the heartbeat brings it).
  */
-type LinkSession = { friend: Profile; phase: "plugging" | "waiting" | "linked" | "unplugging" };
+type LinkSession = {
+  friend: Profile;
+  phase: "plugging" | "waiting" | "linked" | "unplugging";
+  request?: { id: string; askedAt: number };
+};
 
-export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props) {
+export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, onEject }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -253,11 +264,32 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   // While linked, the controls drive the game on the link server instead.
   const playing = linkEmu ?? emulator;
 
+  // A friend asking to link: the game pauses and asks (only when it could plug in right away, and once
+  // nothing else is open over the game; the request waits on the server meanwhile).
+  const [answered, setAnswered] = useState<string | null>(null);
+  const incoming = linkRequests.incoming;
+  const asked: IncomingLinkRequest | null =
+    incoming &&
+    incoming.id !== answered &&
+    signedIn &&
+    session.rom.platform === "gba" &&
+    emulator &&
+    sync &&
+    !link &&
+    !openElsewhere &&
+    status.state !== "conflict" &&
+    panel === null &&
+    !menu &&
+    !confirmReset &&
+    !gallery
+      ? incoming
+      : null;
+
   // Keyboard input; re-bound whenever the player remaps keys.
   useEffect(() => (playing ? bindKeyboard(playing, bindings) : undefined), [playing, bindings]);
   // Game controllers (Gamepad API). They don't reach the game while anything is open over it:
   // they move around it instead (padNav.ts), or light up the Controls panel's drawing and get remapped.
-  const padInMenus = panel !== null || menu || confirmReset || gallery || openElsewhere || status.state === "conflict";
+  const padInMenus = panel !== null || menu || confirmReset || gallery || openElsewhere || status.state === "conflict" || asked !== null;
   useEffect(
     () => (playing && !padInMenus ? bindGamepads(playing, padBindings) : undefined),
     [playing, padInMenus, padBindings],
@@ -549,13 +581,18 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     return (await applyLinkSave(saved)) ? "The link ended. Your game carries on from where the link left it." : "The link ended.";
   };
 
-  const plug = async (friend: Profile) => {
-    if (!emulator || !sync || link) return;
+  /**
+   * `ask`: also ask the friend to plug in (not when they're already waiting for you).
+   * True if plugged in (waiting or linked), false if not (endLink has said why).
+   */
+  const plug = async (friend: Profile, ask: boolean): Promise<boolean> => {
+    if (!emulator || !sync || link) return false;
     unlockLinkAudio();
     setPanel(null);
     setLinkNote(null);
     setLink({ friend, phase: "plugging" });
     linkOn.current = true;
+    friendIn.current = false;
     const wasRunning = emulator.running;
     // The link carries on from where the game is, not from power-on. Taken before pausing:
     // RetroArch only writes a snapshot while the game runs. Without one the link boots the save.
@@ -565,33 +602,43 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     if (wasRunning) emulator.pause();
     sync.setPlaying(false);
     setPaused(true);
+    let collected = false;
     try {
       // The link starts from the save as it is now, so it goes to the cloud first.
       await sync.flush({ keepalive: false });
-      let status: LinkStatus;
+      let status: PlugResponse;
       try {
-        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state);
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state, ask);
       } catch (err) {
         if (!(err instanceof LinkError && err.code === "collect_save_first")) throw err;
         // A save from the last link with this friend: take it (it's newer), then plug in with it,
         // from where that link left the game.
         const saved = await takeLinkSave(friend.friendCode);
         if (saved && saved.romHash !== session.rom.romHash) throw err;
+        collected = saved !== null;
         if (saved && (await applyLinkSave(saved))) state = saved.state;
-        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state);
+        status = await plugIn(friend.friendCode, session.rom.romHash, emulator.getSram(), state, ask);
       }
       if (status.state === "failed") {
         await unplug(friend.friendCode).catch(() => null);
-        return endLink(linkErrorMessage(status.error));
+        endLink(linkErrorMessage(status.error));
+        return false;
       }
-      setLink({ friend, phase: status.state === "linked" ? "linked" : "waiting" });
+      setLink({
+        friend,
+        phase: status.state === "linked" ? "linked" : "waiting",
+        ...(status.requestId ? { request: { id: status.requestId, askedAt: Date.now() } } : {}),
+      });
+      return true;
     } catch (err) {
-      endLink(linkErrorMessage(err));
+      // Linking again can be refused (the friend left), but the save from last time is here now.
+      endLink(collected ? `Your save from your last link was picked up. ${linkErrorMessage(err)}` : linkErrorMessage(err));
+      return false;
     }
   };
 
-  /** Pulls the cable (or stops waiting): ends the link for both. */
-  const unplugLink = async () => {
+  /** Pulls the cable (or stops waiting): ends the link for both. `note`: what to say if it wasn't linked. */
+  const unplugLink = async (note: string | null = null) => {
     if (!link || link.phase === "unplugging" || link.phase === "plugging") return;
     const { friend } = link;
     setLink({ friend, phase: "unplugging" });
@@ -600,10 +647,10 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       if (save && save.romHash === session.rom.romHash) {
         return endLink((await applyLinkSave(save)) ? "Unplugged. Your game carries on from where the link left it." : "Unplugged.");
       }
-      endLink(lost ? "Unplugged. The link’s save couldn’t be recovered, so your save from before is kept." : link.phase === "linked" ? "Unplugged." : null);
+      endLink(lost ? "Unplugged. The link’s save couldn’t be recovered, so your save from before is kept." : link.phase === "linked" ? "Unplugged." : note);
     } catch (err) {
       // Still linked as far as we know; stay put so the player can try again.
-      setLink({ friend, phase: link.phase });
+      setLink(link);
       setLinkNote(linkErrorMessage(err));
     }
   };
@@ -613,6 +660,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const linkPhase = link?.phase;
   const linkFriend = link?.friend;
   const previousLinkPhase = useRef<LinkSession["phase"] | null>(null);
+  /** The friend is plugged in too, as the link poll last saw it (so a link starting isn't taken for a lost request). */
+  const friendIn = useRef(false);
   useEffect(() => {
     if (linkPhase === "linked" && previousLinkPhase.current !== "linked") playMotionCue("link-connected");
     previousLinkPhase.current = linkPhase ?? null;
@@ -628,6 +677,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         return; // A blip; try again next time.
       }
       if (stopped) return;
+      friendIn.current = status.friendPluggedIn;
       if (status.state === "linked") {
         if (linkPhase === "waiting") setLink({ friend: linkFriend, phase: "linked" });
         return;
@@ -648,6 +698,82 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the link's phase and friend only
   }, [linkPhase, linkFriend]);
+
+  // Asked the friend: their answer, or why they can't, comes with this tab's own heartbeat (not the link poll).
+  // Anything but a yes unplugs. A yes removes the request, and the poll above sees the link start.
+  const outgoing = linkRequests.outgoing;
+  const linkRequest = link?.request;
+  useEffect(() => {
+    if (linkPhase !== "waiting" || !linkFriend || !linkRequest || outgoing?.id !== linkRequest.id) return;
+    // The friend already plugged in (accepted just as it ended): the link is starting, leave it be.
+    if (outgoing.state !== "pending" && !friendIn.current) void unplugLink(requestEndNote(linkFriend.name, outgoing));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- acts on each heartbeat's answer
+  }, [outgoing, linkPhase, linkFriend, linkRequest]);
+  // No word on it long after it would have timed out (the server restarted and lost it, or heartbeats
+  // keep failing): nobody can answer it any more.
+  const latestUnplug = useRef(unplugLink);
+  latestUnplug.current = unplugLink;
+  useEffect(() => {
+    if (linkPhase !== "waiting" || !linkFriend || !linkRequest) return;
+    const wait = linkRequest.askedAt + LINK_REQUEST_TIMEOUT_MS + LOST_REQUEST_GRACE_MS - Date.now();
+    const timer = setTimeout(() => {
+      if (!friendIn.current) void latestUnplug.current(`${linkFriend.name} didn’t answer.`);
+    }, Math.max(0, wait));
+    return () => clearTimeout(timer);
+  }, [linkPhase, linkFriend, linkRequest]);
+
+  // While a friend's request is up, the game waits for the answer. Accepting starts it again first,
+  // so the link carries on from where the game is (a snapshot is only taken while it runs).
+  const askedId = asked?.id ?? null;
+  const pausedForRequest = useRef(false);
+  /** Stops waiting for the tab to come back to resume the game (see below). */
+  const resumeOnReturn = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!askedId || !emulator) return;
+    // Still owed a resume from the last request: this one takes it over.
+    const owed = resumeOnReturn.current !== null;
+    resumeOnReturn.current?.();
+    pausedForRequest.current = emulator.running || owed;
+    if (emulator.running) setRunning(false);
+    return () => {
+      const resume = pausedForRequest.current && !linkOn.current;
+      pausedForRequest.current = false;
+      if (!resume) return;
+      if (!document.hidden) return setRunning(true);
+      // Hidden (which ends the request): it carries on once the player is back, not in the background.
+      const onVisibility = () => {
+        if (document.hidden) return;
+        stop();
+        if (!linkOn.current) setRunning(true);
+      };
+      const stop = () => {
+        document.removeEventListener("visibilitychange", onVisibility);
+        resumeOnReturn.current = null;
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      resumeOnReturn.current = stop;
+    };
+  }, [askedId, emulator, setRunning]);
+  // Declared after the effect above, so its clean-up runs after that one's on unmount.
+  useEffect(() => () => resumeOnReturn.current?.(), []);
+
+  const acceptRequest = (request: IncomingLinkRequest) => {
+    setAnswered(request.id);
+    if (pausedForRequest.current) {
+      pausedForRequest.current = false;
+      setRunning(true);
+    }
+    // The friend is plugged in and waiting: this links the two. If it can't, say no to the
+    // request, so the friend hears now rather than when it times out.
+    void plug(request.from, false).then((plugged) => {
+      if (!plugged) declineLinkRequest(request.id).catch(() => null);
+    });
+  };
+
+  const declineRequest = (request: IncomingLinkRequest) => {
+    setAnswered(request.id);
+    declineLinkRequest(request.id).catch((err: unknown) => console.warn("Could not say no to the link request", err));
+  };
 
   // The streamed screen, while linked.
   useEffect(() => {
@@ -727,7 +853,11 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   </span>
                   {link.phase === "waiting" && (
                     <>
-                      <small>Ask {link.friend.name} to plug in with you: Link cable, then your name.</small>
+                      <small>
+                        {link.request
+                          ? `Asked ${link.friend.name} to link. Waiting for them to accept.`
+                          : `Ask ${link.friend.name} to plug in with you: Link cable, then your name.`}
+                      </small>
                       <button type="button" className="btn small" onClick={() => void unplugLink()}>
                         Cancel
                       </button>
@@ -994,7 +1124,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
       {panel === "friends" && <FriendsPanel current={{ romHash: session.rom.romHash }} reduceMotion={prefs.reduceMotion} onClose={() => setPanel(null)} />}
 
-      {panel === "link" && <LinkPanel romHash={session.rom.romHash} onPlug={(friend) => void plug(friend)} onClose={() => setPanel(null)} />}
+      {panel === "link" && <LinkPanel romHash={session.rom.romHash} onPlug={(friend, ask) => void plug(friend, ask)} onClose={() => setPanel(null)} />}
 
       {panel === "account" && (
         <CloudPanel
@@ -1043,6 +1173,26 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         </Modal>
       )}
 
+      {asked && (
+        // B on a controller says no, like going back (padNav.ts sends Escape); A picks Accept, focused first.
+        <Modal labelledBy="link-request-title" onClose={() => declineRequest(asked)}>
+          <h2 id="link-request-title">
+            {asked.from.name} wants to link in {asked.gameName}
+          </h2>
+          <p className="muted">
+            Accept and your games are joined by the link cable, to trade and battle. Your game is paused until you answer.
+          </p>
+          <div className="dialog-foot">
+            <button type="button" className="btn small" onClick={() => declineRequest(asked)}>
+              Decline
+            </button>
+            <button type="button" className="btn small primary" onClick={() => acceptRequest(asked)} autoFocus>
+              Accept
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {status.state === "conflict" && (
         <SaveChoice
           inGame
@@ -1059,6 +1209,30 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
       </p>
     </div>
   );
+}
+
+/** What the asking player is told when their link request ends without a yes. */
+function requestEndNote(name: string, request: OutgoingLinkRequest): string {
+  switch (request.state) {
+    case "declined":
+      return `${name} said no.`;
+    case "timed_out":
+    case "pending":
+      return `${name} didn’t answer.`;
+    case "cancelled":
+      return "The link request was cancelled.";
+    case "unavailable":
+      switch (request.reason) {
+        case "offline":
+          return `${name} went offline.`;
+        case "not_in_game":
+          return `${name} isn’t in a game that links with yours.`;
+        case "hidden":
+          return `${name} isn’t looking at the game.`;
+        case "linked":
+          return `${name} is already linked with someone else.`;
+      }
+  }
 }
 
 function VolumeSlider({ prefs, onPrefs, id }: { prefs: Preferences; onPrefs: (patch: Partial<Preferences>) => void; id?: string }) {
