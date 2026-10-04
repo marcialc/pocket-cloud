@@ -31,11 +31,13 @@ import { decideLaunch } from "../saves/sync";
 import { formatWhen } from "./format";
 import { Brand, Icon, Ridges } from "./icons";
 import { Modal } from "./Modal";
+import { MotionArt } from "./MotionArt";
 import { SaveGallery } from "./SaveGallery";
 import { Badge, type BadgeKind } from "./SyncBadge";
 
 type Props = {
   busy: string | null;
+  insertAnimation: boolean;
   error?: string | undefined;
   /** null while the library is still loading. */
   library: LibraryEntry[] | null;
@@ -74,6 +76,7 @@ type View = "all" | "favorites" | (string & {});
 
 export function RomPicker({
   busy,
+  insertAnimation,
   error,
   library: loadedLibrary,
   cloudLibrary,
@@ -306,7 +309,11 @@ export function RomPicker({
 
       <section className="insert plastic" aria-labelledby="insert-title">
         <div className={`slot${dragging ? " over" : ""}${busy ? " busy" : ""}`}>
-          <span className="slot-mouth" aria-hidden />
+          {insertAnimation ? (
+            <MotionArt name="game-inserted" reduceMotion={prefs.reduceMotion} className="insert-art" />
+          ) : (
+            <span className="slot-mouth" aria-hidden />
+          )}
           {busy ? (
             <p className="px slot-headline blink" role="status">
               {busy}

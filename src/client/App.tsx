@@ -7,6 +7,7 @@ import { FriendsPanel } from "./components/FriendsPanel";
 import { backupName, downloadBytes } from "./components/download";
 import { GameScreen } from "./components/GameScreen";
 import { InviteDialog } from "./components/InviteDialog";
+import { MotionCue, useMotionCue } from "./components/MotionArt";
 import { RomPicker } from "./components/RomPicker";
 import { SaveChoice } from "./components/SaveChoice";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -62,7 +63,7 @@ export type Session = {
 
 type Stage =
   | { name: "pick"; error?: string }
-  | { name: "loading"; label: string }
+  | { name: "loading"; label: string; fromFile?: boolean }
   | { name: "choose"; rom: RomInfo; romData: ArrayBuffer; plan: LaunchPlan }
   | { name: "play"; session: Session };
 
@@ -91,6 +92,7 @@ export function App() {
   const [invite, setInvite] = useState(takeInvite);
   const inviteRef = useRef(invite);
   const [panel, setPanel] = useState<"account" | "controls" | "friends" | null>(null);
+  const { cue: signInCue, play: playSignInCue } = useMotionCue();
 
   // App-wide preferences that live outside any one screen.
   useEffect(() => {
@@ -198,7 +200,8 @@ export function App() {
     await claimRoms(email).catch((err) => console.warn("Could not add this browser's games to the account", err));
     setAccount(email);
     setWelcome(false);
-  }, []);
+    playSignInCue("sign-in-complete");
+  }, [playSignInCue]);
 
   const signedOut = useCallback(async (everywhere: boolean) => {
     await signOut(everywhere);
@@ -304,7 +307,7 @@ export function App() {
   const openRom = useCallback(
     /** `picked`: the player chose this file just now (not from the library). */
     async (data: ArrayBuffer, fileName: string, picked: boolean) => {
-      setStage({ name: "loading", label: "Reading cartridge…" });
+      setStage({ name: "loading", label: "Reading cartridge…", fromFile: picked });
       try {
         const rom = await inspectRom(data, fileName);
         if (prefs.rememberRom) {
@@ -333,7 +336,7 @@ export function App() {
             console.warn("Could not back up this ROM to the account", err),
           );
         }
-        setStage({ name: "loading", label: prefs.cloudSync ? "Checking for saves…" : "Loading save…" });
+        setStage({ name: "loading", label: prefs.cloudSync ? "Checking for saves…" : "Loading save…", fromFile: picked });
         let local = await getLocalSave(rom.romHash);
         const plan = await planLaunch(local, rom.romHash, prefs.cloudSync);
         const d = plan.decision;
@@ -474,6 +477,7 @@ export function App() {
         <>
           <RomPicker
             busy={stage.name === "loading" ? stage.label : account === undefined ? "Starting…" : null}
+            insertAnimation={stage.name === "loading" && !!stage.fromFile}
             error={stage.name === "pick" ? stage.error : undefined}
             library={shelf}
             cloudLibrary={cloudLibrary}
@@ -502,12 +506,13 @@ export function App() {
               onClose={() => setPanel(null)}
             />
           )}
-          {panel === "friends" && account && <FriendsPanel onClose={() => setPanel(null)} />}
+          {panel === "friends" && account && <FriendsPanel reduceMotion={prefs.reduceMotion} onClose={() => setPanel(null)} />}
           {invite && stage.name === "pick" && (
             <InviteDialog
               token={invite}
               account={account}
               onSignedIn={signedIn}
+              reduceMotion={prefs.reduceMotion}
               onDone={(openFriends) => {
                 clearInvite();
                 setInvite(null);
@@ -525,6 +530,7 @@ export function App() {
               onClose={() => setPanel(null)}
             />
           )}
+          <MotionCue cue={signInCue} reduceMotion={prefs.reduceMotion} />
         </>
       );
     case "choose":
@@ -539,14 +545,17 @@ export function App() {
       );
     case "play":
       return (
-        <GameScreen
-          key={stage.session.rom.romHash + stage.session.save?.sramHash}
-          session={stage.session}
-          prefs={prefs}
-          onPrefs={updatePrefs}
-          signedIn={!!account}
-          onEject={() => setStage({ name: "pick" })}
-        />
+        <>
+          <GameScreen
+            key={stage.session.rom.romHash + stage.session.save?.sramHash}
+            session={stage.session}
+            prefs={prefs}
+            onPrefs={updatePrefs}
+            signedIn={!!account}
+            onEject={() => setStage({ name: "pick" })}
+          />
+          <MotionCue cue={signInCue} reduceMotion={prefs.reduceMotion} />
+        </>
       );
   }
 }

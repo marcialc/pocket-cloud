@@ -25,11 +25,13 @@ import {
 } from "../saves/socialApi";
 import { formatPlayTime } from "./format";
 import { Icon } from "./icons";
+import { MotionCue, useMotionCue } from "./MotionArt";
 import { SidePanel } from "./SidePanel";
 
 type Props = {
   /** In-game: this game's leaderboard comes first. */
   current?: { romHash: string } | undefined;
+  reduceMotion: boolean;
   onClose: () => void;
 };
 
@@ -39,11 +41,12 @@ type Load<T> = { state: "loading" } | { state: "error" } | { state: "ready"; val
  * Friends and leaderboards. Games are never sent to friends: each of you
  * loads your own copy, and the same file lands you on the same board.
  */
-export function FriendsPanel({ current, onClose }: Props) {
+export function FriendsPanel({ current, reduceMotion, onClose }: Props) {
   const [profile, setProfile] = useState<Load<MyProfile | null>>({ state: "loading" });
   const [friends, setFriends] = useState<FriendsResponse | null>(null);
   const [games, setGames] = useState<Load<GameLeaderboards[]>>({ state: "loading" });
   const [announce, setAnnounce] = useState("");
+  const { cue, play } = useMotionCue();
   // Names the player gave games in their library, by ROM hash (the boards carry the cartridge title).
   const [names] = useState(() => loadPreferences().shelf.names ?? {});
 
@@ -93,16 +96,18 @@ export function FriendsPanel({ current, onClose }: Props) {
         <>
           <MyCode profile={profile.value} onRenamed={(value) => setProfile({ state: "ready", value })} onAnnounce={setAnnounce} />
           <AddFriend
-            onAdded={(message) => {
+            onAdded={(message, friendsNow) => {
               setAnnounce(message);
+              if (friendsNow) play("friend-added");
               refresh();
             }}
           />
           {friends && (
             <FriendLists
               friends={friends}
-              onChanged={(message) => {
+              onChanged={(message, friendsNow) => {
                 setAnnounce(message);
+                if (friendsNow) play("friend-added");
                 refresh();
               }}
             />
@@ -113,6 +118,7 @@ export function FriendsPanel({ current, onClose }: Props) {
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
+      <MotionCue cue={cue} reduceMotion={reduceMotion} />
     </SidePanel>
   );
 }
@@ -292,7 +298,7 @@ function MyCode({ profile, onRenamed, onAnnounce }: {
   );
 }
 
-function AddFriend({ onAdded }: { onAdded: (message: string) => void }) {
+function AddFriend({ onAdded }: { onAdded: (message: string, friendsNow: boolean) => void }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
@@ -318,7 +324,7 @@ function AddFriend({ onAdded }: { onAdded: (message: string) => void }) {
                     : `Asked ${res.friend.name}. You’ll be friends once they add your code too.`;
                 setMessage({ error: false, text });
                 setCode("");
-                onAdded(text);
+                onAdded(text, res.status === "friends");
               },
               (err) => setMessage({ error: true, text: socialErrorMessage(err) }),
             )
@@ -357,16 +363,16 @@ function AddFriend({ onAdded }: { onAdded: (message: string) => void }) {
   );
 }
 
-function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChanged: (message: string) => void }) {
+function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChanged: (message: string, friendsNow: boolean) => void }) {
   const [confirm, setConfirm] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const act = (promise: Promise<unknown>, message: string) =>
+  const act = (promise: Promise<unknown>, message: string, friendsNow = false) =>
     promise.then(
       () => {
         setConfirm(null);
         setError(null);
-        onChanged(message);
+        onChanged(message, friendsNow);
       },
       (err) => setError(socialErrorMessage(err)),
     );
@@ -393,7 +399,7 @@ function FriendLists({ friends, onChanged }: { friends: FriendsResponse; onChang
                   <button
                     type="button"
                     className="btn small primary"
-                    onClick={() => void act(addFriend(p.friendCode), `You and ${p.name} are friends now.`)}
+                    onClick={() => void act(addFriend(p.friendCode), `You and ${p.name} are friends now.`, true)}
                   >
                     Accept
                   </button>
