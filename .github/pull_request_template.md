@@ -4,7 +4,12 @@
 
 ## How to test
 
-<!-- Steps a reviewer can follow to see it working, and what they should see. Say which browser and device, system (GB / GBC / GBA) and input (keyboard, gamepad or touch) you tested with, and whether you need to be signed in. Mention any new or changed tests. -->
+<!-- Test on the preview link, not locally: Workers Builds deploys every PR and comments its "Preview URL" below. Paste it here.
+List only the flows a reviewer needs to try, each with what they should see. Say what setup is needed (signed in? two accounts? which system: GB / GBC / GBA? a ROM in the cloud library?) and which browser, device and input (keyboard, gamepad or touch) you tried. Mention any new or changed automated tests. -->
+
+**Preview:** <!-- Preview URL from the Workers Builds comment -->
+
+**Setup:** <!-- e.g. two signed-in accounts that are friends, each with the same GBA ROM in the cloud library -->
 
 1.
 2.
@@ -17,7 +22,7 @@
 ## Checklist
 
 - [ ] `pnpm run typecheck` and `pnpm test` pass
-- [ ] Tried it in the browser, not only in tests
+- [ ] Tried the flows above on the preview link, not only in tests
 - [ ] Updated the matching `public/*.html` page if a feature it describes changed
 - [ ] Deploys cleanly: any new secret, R2 bucket or `link-server` change is listed above, with what has to happen before the merge
 - [ ] No ROMs or other game files committed
