@@ -39,7 +39,7 @@ import { ControlsPanel } from "./ControlsPanel";
 import { FriendsPanel } from "./FriendsPanel";
 import { LinkPanel } from "./LinkPanel";
 import { Modal } from "./Modal";
-import { MotionArt, MotionCue, useMotionCue } from "./MotionArt";
+import { MOTION_DURATION_MS, MotionArt, MotionCue, useMotionCue } from "./MotionArt";
 import { backupName, downloadBytes } from "./download";
 import { Brand, Icon, Ridges, type IconName } from "./icons";
 import { SaveChoice } from "./SaveChoice";
@@ -80,6 +80,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const [sync, setSync] = useState<SaveSync | null>(null);
   const [keepSpot, setKeepSpot] = useState<(() => Promise<void>) | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
+  const [showInsert, setShowInsert] = useState(true);
+  const [insertReady, setInsertReady] = useState(false);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Another tab is playing this game, so this one never boots. */
@@ -108,8 +110,17 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
   const bindings = prefs.controls[platform.controls];
   const padBindings = prefs.padControls[platform.controls];
 
-  // Boot: one emulator + one sync pipeline per session.
+  // Show the full cartridge insertion over the LCD before starting the game.
   useEffect(() => {
+    if (!insertReady) return;
+    const reduced = prefs.reduceMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => setShowInsert(false), reduced ? 400 : MOTION_DURATION_MS["game-inserted"]);
+    return () => window.clearTimeout(timer);
+  }, [insertReady, prefs.reduceMotion]);
+
+  // Boot: one emulator + one sync pipeline per session, after the insertion finishes.
+  useEffect(() => {
+    if (showInsert) return;
     let disposed = false;
     const unmounted = new AbortController();
     const emu = createEmulator(session.rom, canvas.current!);
@@ -209,8 +220,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
         l?.release();
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session
-  }, [session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per session after the insertion
+  }, [session, showInsert]);
 
   // Games with a score in RAM (Tetris): follow it while playing and send the best to the leaderboard.
   useEffect(() => {
@@ -397,6 +408,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
 
   const togglePause = () => {
     setRunning(paused);
+    if (paused) playMotionCue("resume-game");
     setAnnounce(paused ? "Resumed" : "Paused");
   };
 
@@ -725,6 +737,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
               )}
               {paused && !link && !error && !flash && (
                 <button type="button" className="lcd-overlay" onClick={togglePause}>
+                  <MotionArt name="game-paused" reduceMotion={prefs.reduceMotion} className="pause-art" />
                   <span className="px">PAUSED</span>
                   <small className="px">PRESS TO RESUME</small>
                 </button>
@@ -740,6 +753,19 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
                   <small>{error}</small>
                 </div>
               )}
+              {showInsert && (
+                <div className="lcd-motion-overlay" role="status">
+                  <MotionArt name="game-inserted" reduceMotion={prefs.reduceMotion} onReady={() => setInsertReady(true)} />
+                  <span className="px">INSERTING GAME…</span>
+                </div>
+              )}
+              {status.state === "syncing" && !cue && !link && !error && !showInsert && (
+                <div className="lcd-motion-overlay" role="status">
+                  <MotionArt name="cloud-backup-syncing" reduceMotion={prefs.reduceMotion} />
+                  <span className="px">BACKING UP SAVE…</span>
+                </div>
+              )}
+              <MotionCue cue={cue} reduceMotion={prefs.reduceMotion} />
             </div>
           </div>
           <div className="shell-foot">
@@ -1027,8 +1053,6 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, onEject }: Props
           onChoose={(c, backup) => resolveConflict(c, backup)}
         />
       )}
-
-      <MotionCue cue={cue} reduceMotion={prefs.reduceMotion} />
 
       <p className="sr-only" aria-live="polite">
         {announce}

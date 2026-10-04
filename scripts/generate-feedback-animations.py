@@ -1,4 +1,4 @@
-# Regenerate the seven Cloudy feedback animations: python3 scripts/generate-feedback-animations.py
+# Regenerate the mascot feedback animations: python3 scripts/generate-feedback-animations.py
 # Requires Pillow (python3 -m pip install pillow).
 from pathlib import Path
 from PIL import Image, ImageDraw
@@ -142,6 +142,7 @@ for i in range(7):
     cloud(im, 176, 30 if i != 5 else 24, happy=i >= 5)
     frames.append(im)
 write('sign-in-complete', frames, 85)
+frames[0].save(OUT / 'sign-in-prompt.png', optimize=True)
 
 # A save tile clicks into the handheld; success is local, with no cloud transfer.
 frames = []
@@ -154,11 +155,25 @@ for i, x in enumerate((174, 153, 135, 126)):
     frames.append(im)
 write('saved-on-device', frames, 75)
 
-# The same small save tile travels from a device to Cloudy and is caught only on success.
+# The device stays busy throughout the actual upload; no check appears before success.
+frames = []
+spinner = [(0, -14), (10, -10), (14, 0), (10, 10), (0, 14), (-10, 10), (-14, 0), (-10, -10)]
+for i in range(8):
+    im = canvas(); d = ImageDraw.Draw(im)
+    handheld(d, 25, 69, lit=True)
+    for j in range(8):
+        x, y = spinner[j]
+        d.rectangle((91 + x, 125 + y, 95 + x, 129 + y), fill=PAPER if j == i else (GREEN if (j - i) % 8 < 3 else DARK_GREEN))
+    save_tile(d, 158, 93)
+    cloud(im, 179, 28, happy=False)
+    frames.append(im)
+write('cloud-backup-syncing', frames, 100, loop=0)
+
+# The save tile travels from the device; the device check appears only after cloud success.
 frames = []
 for i in range(6):
     im = canvas(); d = ImageDraw.Draw(im)
-    handheld(d, 25, 69, lit=True, check=True)
+    handheld(d, 25, 69, lit=True, check=i >= 4)
     x = 124 + i * 24
     y = 89 - min(i, 3) * 11
     save_tile(d, x, y, GREEN)
@@ -229,3 +244,14 @@ for i in range(5):
     cloud(im, 176, 30 if i < 4 else 26, happy=i == 4)
     frames.append(im)
 write('resume-game', frames, 80)
+
+# The console settles into pause and keeps the pause symbol visible until play resumes.
+frames = []
+for i in range(7):
+    im = canvas(); d = ImageDraw.Draw(im)
+    handheld(d, 34, 68, lit=True)
+    d.rectangle((78, 110, 87, 117 + min(i, 3) * 8), fill=DARK_GREEN)
+    d.rectangle((103, 110, 112, 117 + min(i, 3) * 8), fill=DARK_GREEN)
+    cloud(im, 176, 28 + min(i, 3), sleepy=i >= 3)
+    frames.append(im)
+write('game-paused', frames, 100)

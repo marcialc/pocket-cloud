@@ -43,11 +43,11 @@ def cloudy_expression(excited: bool) -> Image.Image:
 waiting_cloud = cloudy_expression(False)
 happy_cloud = cloudy_expression(True)
 
-# Nine poses at 12 fps: cartridge descends, clicks in, LED powers on, Cloudy bounces.
-cart_y = [7, 11, 18, 28, 38, 45, 48, 46, 46]
-cloud_y = [28, 28, 28, 28, 28, 28, 22, 25, 28]
+# A slower descent, then a short hold after the cartridge clicks into place.
+cart_y = [7, 7, 11, 16, 22, 30, 38, 45, 48, 46, 46, 46]
+cloud_y = [28, 28, 28, 28, 28, 28, 28, 28, 22, 25, 28, 28]
 frames = []
-for i in range(9):
+for i in range(len(cart_y)):
     im = Image.new('RGBA', (384, 256), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     y = cart_y[i]
@@ -66,26 +66,26 @@ for i in range(9):
     d.rectangle((70, 84, 122, 95), fill=INK)
     d.rectangle((74, 84, 118, 87), fill='#8a8478')
     d.rectangle((51, 107, 139, 168), fill=INK)
-    d.rectangle((56, 112, 134, 163), fill=LCD_ON if i >= 6 else LCD_OFF)
-    if i >= 6:
+    d.rectangle((56, 112, 134, 163), fill=LCD_ON if i >= 8 else LCD_OFF)
+    if i >= 8:
         d.rectangle((64, 121, 126, 124), fill='#c1cbb5')
         d.rectangle((64, 132, 110, 135), fill='#c1cbb5')
     d.rectangle((66, 181, 94, 191), fill=INK)
     d.rectangle((75, 172, 85, 201), fill=INK)
     d.rectangle((119, 181, 136, 198), fill=RED)
-    d.rectangle((128, 101, 136, 109), fill=RED if i >= 6 else '#8c1f2d')
-    if i == 6:
+    d.rectangle((128, 101, 136, 109), fill=RED if i >= 8 else '#8c1f2d')
+    if i == 8:
         d.rectangle((128, 93, 136, 96), fill=RED)
         d.rectangle((140, 101, 143, 109), fill=RED)
 
     # Cloudy moves only after the game has clicked into place.
-    im.alpha_composite(happy_cloud if i >= 6 else waiting_cloud, (174, cloud_y[i]))
+    im.alpha_composite(happy_cloud if i >= 8 else waiting_cloud, (174, cloud_y[i]))
     frames.append(im)
 
 sheet = Image.new('RGBA', (384 * len(frames), 256), (0, 0, 0, 0))
 for i, frame in enumerate(frames):
     sheet.alpha_composite(frame, (384 * i, 0))
 sheet.save(OUT / 'game-inserted-sprites.png', optimize=True)
-frames[0].save(OUT / 'game-inserted.apng', save_all=True, append_images=frames[1:], duration=83, loop=1, disposal=0, blend=0, optimize=True)
-frames[0].save(OUT / 'game-inserted.webp', save_all=True, append_images=frames[1:], duration=83, loop=1, lossless=True, method=6)
+frames[0].save(OUT / 'game-inserted.apng', save_all=True, append_images=frames[1:], duration=125, loop=1, disposal=0, blend=0, optimize=True)
+frames[0].save(OUT / 'game-inserted.webp', save_all=True, append_images=frames[1:], duration=125, loop=1, lossless=True, method=6)
 frames[-1].save(OUT / 'game-inserted-poster.png', optimize=True)

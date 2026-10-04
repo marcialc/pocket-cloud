@@ -63,7 +63,7 @@ export type Session = {
 
 type Stage =
   | { name: "pick"; error?: string }
-  | { name: "loading"; label: string; fromFile?: boolean }
+  | { name: "loading"; label: string }
   | { name: "choose"; rom: RomInfo; romData: ArrayBuffer; plan: LaunchPlan }
   | { name: "play"; session: Session };
 
@@ -307,7 +307,7 @@ export function App() {
   const openRom = useCallback(
     /** `picked`: the player chose this file just now (not from the library). */
     async (data: ArrayBuffer, fileName: string, picked: boolean) => {
-      setStage({ name: "loading", label: "Reading cartridge…", fromFile: picked });
+      setStage({ name: "loading", label: "Reading cartridge…" });
       try {
         const rom = await inspectRom(data, fileName);
         if (prefs.rememberRom) {
@@ -336,7 +336,7 @@ export function App() {
             console.warn("Could not back up this ROM to the account", err),
           );
         }
-        setStage({ name: "loading", label: prefs.cloudSync ? "Checking for saves…" : "Loading save…", fromFile: picked });
+        setStage({ name: "loading", label: prefs.cloudSync ? "Checking for saves…" : "Loading save…" });
         let local = await getLocalSave(rom.romHash);
         const plan = await planLaunch(local, rom.romHash, prefs.cloudSync);
         const d = plan.decision;
@@ -477,7 +477,6 @@ export function App() {
         <>
           <RomPicker
             busy={stage.name === "loading" ? stage.label : account === undefined ? "Starting…" : null}
-            insertAnimation={stage.name === "loading" && !!stage.fromFile}
             error={stage.name === "pick" ? stage.error : undefined}
             library={shelf}
             cloudLibrary={cloudLibrary}
