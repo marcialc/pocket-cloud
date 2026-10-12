@@ -724,7 +724,7 @@ kbd.empty { color: var(--ink-2); }
   color: var(--lcd-light); background: rgba(22, 19, 28, 0.88); text-align: center; line-height: 1.4; pointer-events: none;
 }
 .lcd-motion-overlay .motion-art, .lcd .motion-cue .motion-art { width: min(280px, 68%); }
-.lcd-motion-overlay .px { font-size: clamp(9px, 2vw, 13px); }
+.lcd-motion-overlay .px, .lcd .motion-cue .px { font-size: clamp(9px, 2vw, 13px); }
 .lcd .motion-cue { z-index: 6; }
 .waiting-art { width: min(180px, 70%); flex-shrink: 0; }
 /* The game streamed from the link server, over this device's own (paused) screen. */

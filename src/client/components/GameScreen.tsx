@@ -61,6 +61,10 @@ type Props = {
 };
 
 const DIM_AFTER_MS = 2500;
+/** Shortest time the "backing up" overlay stays up (a little over one loop of its animation). */
+const BACKING_UP_MIN_MS = 1200;
+/** How long a "saved" or "backed up" cue rests on screen. */
+const SAVE_CUE_HOLD_MS = 1400;
 /** How often the spot to carry on from is snapshotted while playing, in case the tab dies before leaving cleanly. */
 const RESUME_SNAPSHOT_MS = 30_000;
 // iPhone Safari can't make a page element fullscreen, so the button is hidden there.
@@ -114,6 +118,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
   const [dim, setDim] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const { cue, play: playMotionCue } = useMotionCue();
+  const [backingUp, setBackingUp] = useState(false);
   const [announce, setAnnounce] = useState("");
   const title = gameName(prefs.shelf, session.rom.romHash) ?? displayName(session.rom);
   const platform = PLATFORMS[session.rom.platform];
@@ -137,6 +142,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
     const emu = createEmulator(session.rom, canvas.current!);
     let saveSync: SaveSync | null = null;
     let lock: GameLock | null = null;
+    let backupTimer: number | null = null;
     let remember: (() => Promise<void>) | null = null;
     const keeper = new ScreenKeeper(emu);
     shots.current = keeper;
@@ -184,13 +190,28 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
       remember = resumeKeeper(emu, session.rom.romHash);
       saveSync = new SaveSync(emu, session.rom, session.save, prefs.cloudSync, rtcBase, keeper);
       let previousSaveState = saveSync.getStatus().state;
+      let backupShownAt = 0;
+      const backedUp = () => playMotionCue("cloud-backup-complete", { label: "SAVE BACKED UP", holdMs: SAVE_CUE_HOLD_MS });
       saveSync.subscribe((next) => {
         if (disposed) return;
         setStatus(next);
-        if (next.state === "saved-local" || (next.state === "local-only" && previousSaveState === "local-only")) {
-          playMotionCue("saved-on-device");
-        } else if (next.state === "synced" && (previousSaveState === "saved-local" || previousSaveState === "syncing")) {
-          playMotionCue("cloud-backup-complete");
+        if (next.state === "syncing") {
+          if (backupTimer !== null) window.clearTimeout(backupTimer);
+          backupTimer = null;
+          backupShownAt = Date.now();
+          setBackingUp(true);
+        } else if (previousSaveState === "syncing") {
+          // A quick upload would only flash the overlay: keep it up long enough to read, then say it finished.
+          backupTimer = window.setTimeout(() => {
+            backupTimer = null;
+            setBackingUp(false);
+            if (next.state === "synced") backedUp();
+          }, Math.max(0, BACKING_UP_MIN_MS - (Date.now() - backupShownAt)));
+        } else if (next.state === "local-only" && previousSaveState === "local-only") {
+          // With cloud sync on, the backup that follows is the one animation for a save.
+          playMotionCue("saved-on-device", { label: "SAVED", holdMs: SAVE_CUE_HOLD_MS });
+        } else if (next.state === "synced" && previousSaveState === "saved-local") {
+          backedUp();
         }
         previousSaveState = next.state;
       });
@@ -213,6 +234,8 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
     return () => {
       disposed = true;
       unmounted.abort();
+      if (backupTimer !== null) window.clearTimeout(backupTimer);
+      setBackingUp(false);
       keeper.stop();
       // Where the game was left. RetroArch only writes a snapshot while it runs, so the game is
       // silenced at once but paused only once that's taken.
@@ -889,7 +912,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
                   <span className="px">INSERTING GAME…</span>
                 </div>
               )}
-              {status.state === "syncing" && !cue && !link && !error && !showInsert && (
+              {backingUp && !cue && !link && !error && !showInsert && (
                 <div className="lcd-motion-overlay" role="status">
                   <MotionArt name="cloud-backup-syncing" reduceMotion={prefs.reduceMotion} />
                   <span className="px">BACKING UP SAVE…</span>

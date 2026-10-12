@@ -14,21 +14,25 @@ export const MOTION_DURATION_MS = {
 } as const;
 
 export type MotionName = keyof typeof MOTION_DURATION_MS;
-type Cue = { name: MotionName; id: number };
+type Cue = { name: MotionName; id: number; label?: string };
+type CueOptions = { label?: string; holdMs?: number };
 
-/** Run a one-shot decorative cue without delaying the action it celebrates. */
+/**
+ * Run a one-shot decorative cue without delaying the action it celebrates. `holdMs` keeps a short
+ * cue up long enough to read; it rests on its last frame.
+ */
 export function useMotionCue() {
   const [cue, setCue] = useState<Cue | null>(null);
   const nextId = useRef(0);
   const timer = useRef<number | null>(null);
-  const play = useCallback((name: MotionName) => {
+  const play = useCallback((name: MotionName, { label, holdMs = 0 }: CueOptions = {}) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     const id = ++nextId.current;
-    setCue({ name, id });
+    setCue({ name, id, label });
     timer.current = window.setTimeout(() => {
       setCue((current) => (current?.id === id ? null : current));
       timer.current = null;
-    }, MOTION_DURATION_MS[name] + 250);
+    }, Math.max(MOTION_DURATION_MS[name] + 250, holdMs));
   }, []);
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -57,6 +61,7 @@ export function MotionCue({ cue, reduceMotion }: { cue: Cue | null; reduceMotion
   return cue ? (
     <div className="motion-cue" aria-hidden="true">
       <MotionArt key={cue.id} name={cue.name} reduceMotion={reduceMotion} />
+      {cue.label && <span className="px">{cue.label}</span>}
     </div>
   ) : null;
 }
