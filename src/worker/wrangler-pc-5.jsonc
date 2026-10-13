@@ -1,0 +1,184 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "pocket-cloud",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2026-08-15",
+	"preview_urls": true,
+	"observability": {
+		"enabled": true
+	},
+	"triggers": {
+		"crons": ["17 4 * * *"]
+	},
+	"routes": [
+		{
+			"pattern": "pocketcloud.app",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "PLAYER_SAVE",
+				"class_name": "PlayerSaveDO"
+			},
+			{
+				"name": "AUTH",
+				"class_name": "AuthDO"
+			},
+			{
+				"name": "SOCIAL",
+				"class_name": "SocialDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"PlayerSaveDO"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"AuthDO"
+			]
+		},
+		{
+			"tag": "v3",
+			"new_sqlite_classes": [
+				"SocialDO"
+			]
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "ROMS",
+			"bucket_name": "pocket-cloud-roms"
+		},
+		{
+			"bucket_name": "pocket-cloud-roms-preview",
+			"binding": "pocket_cloud_roms_preview"
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	"vars": {
+		"MAINTENANCE_APPLY": "0"
+	},
+	"ratelimits": [
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		},
+		{
+			"name": "SAVES_LIMITER",
+			"namespace_id": "1011",
+			"simple": {
+				"limit": 120,
+				"period": 60
+			}
+		},
+		{
+			"name": "ROMS_LIMITER",
+			"namespace_id": "1012",
+			"simple": {
+				"limit": 30,
+				"period": 60
+			}
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "BACKLOG",
+				"queue": "pocket-cloud-backlog"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "pocket-cloud-backlog",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 3,
+				"max_concurrency": 10,
+				"dead_letter_queue": "pocket-cloud-dlq"
+			},
+			{
+				// Quarantine only: the handler logs with full context and acks;
+				// nothing retries forever silently.
+				"queue": "pocket-cloud-dlq",
+				"max_batch_size": 10
+			}
+		]
+	},
+	"previews": {
+		"durable_objects": {
+			"bindings": [
+				{
+					"name": "PLAYER_SAVE",
+					"class_name": "PlayerSaveDO"
+				},
+				{
+					"name": "AUTH",
+					"class_name": "AuthDO"
+				},
+				{
+					"name": "SOCIAL",
+					"class_name": "SocialDO"
+				}
+			]
+		},
+		"r2_buckets": [
+			{
+				"binding": "ROMS",
+				"bucket_name": "pocket-cloud-roms-preview"
+			}
+		],
+		"send_email": [
+			{
+				"name": "EMAIL"
+			}
+		],
+		"ratelimits": [
+			{
+				"name": "AUTH_LIMITER",
+				"namespace_id": "1002",
+				"simple": {
+					"limit": 10,
+					"period": 60
+				}
+			},
+			{
+				"name": "SAVES_LIMITER",
+				"namespace_id": "2011",
+				"simple": {
+					"limit": 120,
+					"period": 60
+				}
+			},
+			{
+				"name": "ROMS_LIMITER",
+				"namespace_id": "2012",
+				"simple": {
+					"limit": 30,
+					"period": 60
+				}
+			}
+		]
+	}
+}
