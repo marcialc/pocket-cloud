@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
     permissions:
       # required for all workflows
-      security-events: writerite
+      security-events: read
 
       # required to fetch internal or private CodeQL packs
       packages: read
