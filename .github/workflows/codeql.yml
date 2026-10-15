@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
     permissions:
       # required for all workflows
-      security-events: write
+      security-events: writerite
 
       # required to fetch internal or private CodeQL packs
       packages: read
@@ -43,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - language: javascript-typescript, python, WASM
+        - language: javascript-typescript, python
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
