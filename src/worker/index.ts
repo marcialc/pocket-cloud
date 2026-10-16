@@ -31,6 +31,7 @@ import { handleLink } from "./link";
 import { handleRoms } from "./roms";
 import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
 import { track, trackSeen } from "./stats";
+import { allow } from "./toolkit";
 
 export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
@@ -155,6 +156,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const match = /^\/api\/saves\/([^/]+)$/.exec(path);
   const romHash = match?.[1];
   if (!romHash || !HASH_PATTERN.test(romHash)) return json({ error: "invalid_rom_hash" }, 400);
+
+  // Per-player fairness cap on the state-changing methods only; reading a save
+  // (GET) stays unlimited. The limiter is a no-op when the binding is absent.
+  if (request.method !== "GET" && !(await allow(env, "SAVES_LIMITER", identity.playerId))) {
+    return json({ error: "rate_limited" }, 429);
+  }
 
   switch (request.method) {
     case "GET": {
