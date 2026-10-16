@@ -77,6 +77,45 @@ export type SaveHistoryResponse = { current: SaveVersion | null; versions: SaveV
 
 export type RestoreSaveResponse = { save: CloudSaveMeta };
 
+/**
+ * Save states: the emulator's snapshot slots, kept beside the SRAM save (see
+ * PlayerSaveDO). States travel as base64 inside JSON, like SRAM.
+ */
+export const MAX_STATE_BYTES = 512 * 1024;
+
+/** Slots the emulator exposes, 0 through 5. */
+export const MAX_STATE_SLOT = 5;
+
+/** Longest state label kept. */
+export const MAX_STATE_LABEL = 64;
+
+/** A state's content hash has the same SHA-256 hex shape as a save's. */
+export const STATE_HASH_PATTERN = HASH_PATTERN;
+
+/** One stored save state's metadata (bytes fetched separately). */
+export type SaveStateMeta = {
+  romHash: string;
+  slot: number;
+  label: string | null;
+  stateHash: string;
+  stateSize: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SaveStateResponse = SaveStateMeta & {
+  /** base64-encoded state bytes. */
+  state: string;
+};
+
+export type ListStatesResponse = { states: SaveStateMeta[] };
+
+export type PutSaveStateRequest = {
+  label?: string | null;
+  state: string;
+  stateHash: string;
+};
+
 /** Largest ROM of a supported platform (GBA: 32 MiB). */
 export const MAX_ROM_BYTES = 32 * 1024 * 1024;
 /** Smallest file the cloud library takes; real ROMs are bigger (NES and Master System from 16 KiB). */

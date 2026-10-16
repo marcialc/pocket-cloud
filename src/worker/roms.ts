@@ -15,6 +15,7 @@ import {
 } from "../shared/api";
 import { json, methodNotAllowed, readLimited } from "./http";
 import { track } from "./stats";
+import { allow } from "./toolkit";
 
 /**
  * Cloud ROM library for signed-in players (R2, one object per ROM):
@@ -75,8 +76,12 @@ export async function handleRoms(request: Request, env: Env, url: URL, playerId:
       });
     }
     case "PUT":
+      // Uploads are the expensive write; cap them per player. A missing limiter
+      // binding allows the request.
+      if (!(await allow(env, "ROMS_LIMITER", playerId))) return json({ error: "rate_limited" }, 429);
       return putRom(request, env, url, prefix, removedPrefix, romHash, ctx, playerId);
     case "DELETE": {
+      if (!(await allow(env, "ROMS_LIMITER", playerId))) return json({ error: "rate_limited" }, 429);
       if (!(await env.ROMS.head(key))) return json({ error: "not_found" }, 404);
       await env.ROMS.put(removedPrefix + romHash, new Uint8Array(0));
       await env.ROMS.delete(key);
