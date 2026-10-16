@@ -31,7 +31,7 @@ import { handleLink } from "./link";
 import { handleRoms } from "./roms";
 import { handleInvitePreview, handleSocial, recordSaveScores } from "./social";
 import { track, trackSeen } from "./stats";
-import { allow } from "./toolkit";
+import { allow, handleStates } from "./toolkit";
 
 export { AuthDO } from "./durable-objects/AuthDO";
 export { PlayerSaveDO } from "./durable-objects/PlayerSaveDO";
@@ -49,6 +49,10 @@ export { StatsDO } from "./durable-objects/StatsDO";
  *   GET    /api/saves/:romHash/history                    current save and earlier versions (with pictures)
  *   GET    /api/saves/:romHash/history/:revision          fetch one earlier version (with SRAM)
  *   POST   /api/saves/:romHash/history/:revision/restore  make an earlier version the current save
+ *   GET    /api/saves/:romHash/states                     list save states (snapshot slots)
+ *   GET    /api/saves/:romHash/states/:slot               fetch one save state
+ *   PUT    /api/saves/:romHash/states/:slot               store one save state
+ *   DELETE /api/saves/:romHash/states/:slot               drop one save state
  *   /api/roms/*                    cloud ROM library and cover images (email sign-in only), see roms.ts
  *   GET    /api/settings           account-wide settings (email sign-in only)
  *   PUT    /api/settings           replace the ones sent (controls, library shelf)
@@ -152,6 +156,18 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 
   const history = /^\/api\/saves\/([^/]+)\/history(?:\/(\d{1,15})(\/restore)?)?$/.exec(path);
   if (history) return handleHistory(request, stub, history[1]!, history[2], history[3] !== undefined);
+
+  const states = /^\/api\/saves\/([^/]+)\/states(?:\/([0-5]))?$/.exec(path);
+  if (states) {
+    const romHash = states[1]!;
+    if (!HASH_PATTERN.test(romHash)) return json({ error: "invalid_rom_hash" }, 400);
+    // Same per-player fairness cap as the single-save routes, on the
+    // state-changing methods only; reading states stays unlimited.
+    if (request.method !== "GET" && !(await allow(env, "SAVES_LIMITER", identity.playerId))) {
+      return json({ error: "rate_limited" }, 429);
+    }
+    return handleStates(request, stub, romHash, path);
+  }
 
   const match = /^\/api\/saves\/([^/]+)$/.exec(path);
   const romHash = match?.[1];
