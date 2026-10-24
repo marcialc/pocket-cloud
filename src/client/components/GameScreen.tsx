@@ -315,7 +315,7 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
     });
   }, [padBindings]);
 
-  // Playing with a controller hides the touch gamepad (phones only; it isn't shown elsewhere) until
+  // Playing with a controller hides the touch gamepad (phones held sideways; styles.css) until
   // the screen is touched or the last controller goes away. Waits for a press, not a connection:
   // a paired controller can sit asleep in a bag.
   const [padPlaying, setPadPlaying] = useState(false);
@@ -359,7 +359,18 @@ export function GameScreen({ session, prefs, onPrefs, signedIn, linkRequests, on
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
-    return () => ro.disconnect();
+    // iOS Safari can skip the stage's last resize when the phone is rotated, leaving the
+    // portrait size in landscape; fit again once the rotated layout has settled.
+    let frame = 0;
+    const refit = () => (cancelAnimationFrame(frame), (frame = requestAnimationFrame(fit)));
+    window.addEventListener("resize", refit);
+    window.addEventListener("orientationchange", refit);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", refit);
+      window.removeEventListener("orientationchange", refit);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the LCD size is fixed per session
   }, [prefs.screenSize]);
 

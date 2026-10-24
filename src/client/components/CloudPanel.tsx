@@ -163,7 +163,7 @@ export function CloudPanel({ prefs, onPrefs, onSignedIn, onSignOut, onBeforeRest
           </label>
           <Setting
             title="Hide touch buttons with a controller"
-            desc="On a phone, the on-screen buttons step aside while you play with a game controller. Touch the screen to bring them back."
+            desc="On a phone held sideways, the on-screen buttons step aside while you play with a game controller. Touch the screen to bring them back."
             on={prefs.hideTouchWithPad}
             onChange={(hideTouchWithPad) => onPrefs({ hideTouchWithPad })}
           />
