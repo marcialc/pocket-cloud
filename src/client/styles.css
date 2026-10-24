@@ -930,6 +930,8 @@ kbd.empty { color: var(--ink-2); }
   .stage {
     position: absolute; inset: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
     --chrome-x: 0px; --chrome-y: 0px; width: auto; height: auto; margin: 0;
+    /* Undo the portrait centering: on an absolute box it shrinks the stage to the LCD, which then never grows. */
+    align-self: stretch;
   }
   .bezel { padding: 0; border-radius: 0; background: none; box-shadow: none; }
   .power, .game .brand { display: none; }
