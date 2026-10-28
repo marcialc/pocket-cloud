@@ -31,6 +31,27 @@ export type PutSaveInput = {
   screenshot?: Uint8Array;
 };
 
+/** One stored save state's metadata (bytes fetched separately). */
+export type StoredStateMeta = {
+  romHash: string;
+  slot: number;
+  label: string | null;
+  stateHash: string;
+  stateSize: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoredState = StoredStateMeta & { state: Uint8Array };
+
+export type PutStateInput = {
+  romHash: string;
+  slot: number;
+  label?: string;
+  state: Uint8Array;
+  stateHash: string;
+};
+
 /**
  * How a request proved it may use this player: the anonymous player key, or
  * an email session for the account that owns it.
@@ -50,6 +71,16 @@ type SaveRow = {
   play_time: number | null;
   rtc_base: number | null;
   screenshot: ArrayBuffer | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type StateRow = {
+  rom_hash: string;
+  slot: number;
+  label: string | null;
+  state: ArrayBuffer;
+  state_hash: string;
   created_at: number;
   updated_at: number;
 };
@@ -102,6 +133,17 @@ const MIGRATIONS: string[] = [
   // A picture of the game from just before each save, shown when picking one to go back to.
   `ALTER TABLE game_saves ADD COLUMN screenshot BLOB`,
   `ALTER TABLE save_history ADD COLUMN screenshot BLOB`,
+  // Save states: the emulator's snapshot slots, one row per (game, slot).
+  `CREATE TABLE save_states (
+     rom_hash   TEXT NOT NULL,
+     slot       INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 5),
+     label      TEXT,
+     state      BLOB NOT NULL,
+     state_hash TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     PRIMARY KEY (rom_hash, slot)
+   )`,
 ];
 
 export class PlayerSaveDO extends DurableObject<Env> {
@@ -220,6 +262,43 @@ export class PlayerSaveDO extends DurableObject<Env> {
     return this.sql.exec("DELETE FROM game_saves WHERE rom_hash = ?", romHash).rowsWritten > 0;
   }
 
+  /** Every stored state for a game, ordered by slot. */
+  async listStates(romHash: string): Promise<StoredStateMeta[]> {
+    return this.sql
+      .exec<StateRow>("SELECT * FROM save_states WHERE rom_hash = ? ORDER BY slot", romHash)
+      .toArray()
+      .map(stateToMeta);
+  }
+
+  async getState(romHash: string, slot: number): Promise<StoredState | null> {
+    const row = this.readStateRow(romHash, slot);
+    return row ? { ...stateToMeta(row), state: new Uint8Array(row.state) } : null;
+  }
+
+  async putState(input: PutStateInput): Promise<StoredStateMeta> {
+    const existing = this.readStateRow(input.romHash, input.slot);
+    const now = Date.now();
+    this.sql.exec(
+      `INSERT INTO save_states (rom_hash, slot, label, state, state_hash, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (rom_hash, slot) DO UPDATE SET
+         label = excluded.label, state = excluded.state,
+         state_hash = excluded.state_hash, updated_at = excluded.updated_at`,
+      input.romHash,
+      input.slot,
+      input.label ?? null,
+      input.state,
+      input.stateHash,
+      existing?.created_at ?? now,
+      now,
+    );
+    return stateToMeta(this.readStateRow(input.romHash, input.slot)!);
+  }
+
+  async deleteState(romHash: string, slot: number): Promise<boolean> {
+    return this.sql.exec("DELETE FROM save_states WHERE rom_hash = ? AND slot = ?", romHash, slot).rowsWritten > 0;
+  }
+
   /** A game's current save and its earlier versions, newest first (each with the revision it had), with their pictures. */
   async listHistory(romHash: string): Promise<{ current: StoredVersion | null; versions: StoredVersion[] }> {
     const current = this.readRow(romHash);
@@ -322,6 +401,12 @@ export class PlayerSaveDO extends DurableObject<Env> {
   private readRow(romHash: string): SaveRow | null {
     return this.sql.exec<SaveRow>("SELECT * FROM game_saves WHERE rom_hash = ?", romHash).toArray()[0] ?? null;
   }
+
+  private readStateRow(romHash: string, slot: number): StateRow | null {
+    return (
+      this.sql.exec<StateRow>("SELECT * FROM save_states WHERE rom_hash = ? AND slot = ?", romHash, slot).toArray()[0] ?? null
+    );
+  }
 }
 
 /** `known`: sizes read without loading the bytes (see listSaves). */
@@ -343,4 +428,16 @@ function toMeta(row: SaveRow, known?: { sramSize: number; hasScreenshot: boolean
 
 function toVersion(row: SaveRow): StoredVersion {
   return { ...toMeta(row), ...(row.screenshot != null ? { screenshot: new Uint8Array(row.screenshot) } : {}) };
+}
+
+function stateToMeta(row: StateRow): StoredStateMeta {
+  return {
+    romHash: row.rom_hash,
+    slot: row.slot,
+    label: row.label,
+    stateHash: row.state_hash,
+    stateSize: row.state.byteLength,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
